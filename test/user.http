@@ -1,0 +1,42 @@
+### Test de endpoints adicionales
+### Cambia el puerto y la URL según tu configuración
+
+@baseUrl = http://localhost:3000/api/v1/users
+@contentType = application/json
+
+### Generar nuevo jwt cuando se esté testeando 
+@authToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTgzMjExNTEsInVzZXJJZCI6IjY4Y2EyODgxYTllMDY2MmUyMTUxZDlkNyJ9._C_JmxORx970VyAzSf1J_SdGNTqyT0nalbgZIl0-oUs
+
+### 9. Flujo completo: Login -> Obtener sugerencias -> Actualizar perfil
+
+### 9.1 Login
+# @name login
+POST http://localhost:3000/api/v1/auth/login
+Content-Type: {{contentType}}
+
+{
+  "username": "testuser",
+  "password": "password123"
+}
+
+### Guardar el token
+
+@authToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTgzMjE5MTksInVzZXJJZCI6IjY4Y2EyODgxYTllMDY2MmUyMTUxZDlkNyJ9._Ds5kqr22iPtpaReF5XINJzMwJv25-2HaEVAHoR-YnE"
+
+### 9.2 Obtener conexiones sugeridas
+GET {{baseUrl}}/suggestions
+Cookie: jwt-talentnest={{authToken}}
+
+### 9.3 Actualizar perfil
+PUT {{baseUrl}}/profile
+Content-Type: {{contentType}}
+Cookie: jwt-talentnest={{authToken}}
+
+{
+  "headline": "Nuevo título profesional",
+  "about": "Descripción actualizada de mi perfil profesional",
+  "skills": ["Go", "Fiber", "MongoDB", "React", "TypeScript"]
+}
+
+### 9.4 Verificar que se actualizó el perfil
+GET {{baseUrl}}/testuser

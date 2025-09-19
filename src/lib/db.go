@@ -11,6 +11,7 @@ import (
 
 var DB *mongo.Database
 
+// ConnectDB initializes the MongoDB connection and sets the global DB variable
 func ConnectDB() {
 
 	var db_url string = os.Getenv("MONGO_URI")
