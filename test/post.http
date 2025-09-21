@@ -1,0 +1,176 @@
+@baseUrl = http://localhost:3000/api/v1/posts
+@contentType = application/json 
+
+### Generar nuevo jwt cuando se esté testeando 
+POST http://localhost:3000/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "password123"
+}
+
+@authToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg1NTI5NDAsInVzZXJJZCI6IjY4Y2EyODgxYTllMDY2MmUyMTUxZDlkNyJ9.h0CfNyfjD70RUVjhwqveknxEn_SVMNvQJH1FhYOE6c0"
+
+###Create post test
+
+### Crear un post sin imagen
+POST {{baseUrl}}/create
+Content-Type: {{contentType}}
+Cookie: jwt-talentnest={{authToken}}
+
+{
+  "content": "Este es mi primer post de prueba sin imagen"
+}
+
+### Crear un post con imagen (Base64)
+POST {{baseUrl}}/create
+Content-Type: {{contentType}}
+Cookie: jwt-talentnest={{authToken}}
+
+{
+  "content": "Este es un post con imagen en Base64",
+  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+}
+
+### Crear un post con URL de imagen
+POST {{baseUrl}}/create
+Content-Type: Content-Type: {{contentType}}
+Cookie: jwt-talentnest={{authToken}}
+
+{
+  "content": "Este es un post con URL de imagen",
+  "image": "https://ejemplo.com/imagen.jpg"
+}
+
+### Crear un post sin contenido (debería fallar)
+POST {{baseUrl}}/create
+Content-Type: Content-Type: {{contentType}}
+Cookie: jwt-talentnest={{authToken}}
+
+{
+  "content": ""
+}
+
+### Intentar crear un post sin autenticación (debería fallar)
+POST {{baseUrl}}/create
+Content-Type: Content-Type: {{contentType}}
+
+{
+  "content": "Este post no debería crearse sin token"
+}
+
+### Intentar crear un post con cuerpo inválido (debería fallar)
+POST {{baseUrl}}/create
+Content-Type: Content-Type: {{contentType}}
+Cookie: jwt-talentnest={{authToken}}
+
+"esto no es un JSON válido"
+
+### GetFeedPosts test
+
+### Obtener feed de posts del usuario autenticado
+GET {{baseUrl}}
+Authorization: Bearer {{authToken}}
+
+### Obtener feed de posts sin autenticación (debería fallar)
+GET {{baseUrl}}
+
+### Obtener feed de posts con token inválido (debería fallar)
+GET {{baseUrl}}
+Authorization: Bearer token_invalido_aqui
+
+### Obtener feed de posts con parámetros de paginación (si los soportas)
+GET {{baseUrl}}
+Authorization: Bearer {{authToken}}
+
+### Obtener feed de posts ordenados por fecha ascendente (si los soportas)
+GET {{baseUrl}}
+Authorization: Bearer {{authToken}}
+
+### Delete Post
+
+### Eliminar un post existente (éxito)
+DELETE {{baseUrl}}/delete/VALIDPOSTId
+Cookie: {{{{authToken}}}}
+
+### Eliminar un post con ID inválido (debería fallar)
+DELETE {{baseUrl}}/delete/invalid_id
+Cookie: {{{{authToken}}}}
+
+### Eliminar un post que no existe (debería fallar)
+DELETE {{baseUrl}}/delete/nonExistentPostId
+Cookie: {{{{authToken}}}}
+
+### Get Post by ID
+
+### Obtener un post por ID válido (éxito)
+GET {{baseUrl}}/68d01258b33227b47fd99e3c
+Authorization: Bearer {{authToken}}
+
+### Obtener un post por ID válido sin autenticación (si está permitido)
+GET {{baseUrl}}/68d01258b33227b47fd99e3c
+
+### Obtener un post con ID inválido (debería fallar)
+GET {{baseUrl}}/invalid_id_123
+Authorization: Bearer {{authToken}}
+
+### Create Comment Test
+
+@validPostId = "68d01258b33227b47fd99e3c"
+
+### Crear un comentario en un post existente (éxito)
+POST {{baseUrl}}/68d01258b33227b47fd99e3c/comment
+Content-Type: application/json
+Authorization: Bearer {{authToken}}
+
+{
+  "content": "Este es un comentario de prueba en el post"
+}
+
+### Crear un comentario con contenido vacío (debería fallar)
+POST {{baseUrl}}/68d01258b33227b47fd99e3c/comment
+Content-Type: application/json
+Authorization: Bearer {{authToken}}
+
+{
+  "content": ""
+}
+
+### Crear un comentario sin contenido en el body (debería fallar)
+POST {{baseUrl}}/68d01258b33227b47fd99e3c/comment
+Content-Type: application/json
+Authorization: Bearer {{authToken}}
+
+{}
+
+### Crear un comentario en un post que no existe (debería fallar)
+POST {{baseUrl}}/iddonotexist/comment
+Content-Type: application/json
+Authorization: Bearer {{authToken}}
+
+{
+  "content": "Comentario en post inexistente"
+}
+
+### Crear un comentario con body inválido (debería fallar)
+POST {{baseUrl}}/68d01258b33227b47fd99e3c/comment
+Content-Type: application/json
+Authorization: Bearer {{authToken}}
+
+"esto no es un JSON válido"
+
+
+### Like 
+
+### Dar like a un post existente (éxito)
+POST {{baseUrl}}/68d01258b33227b47fd99e3c/like
+Authorization: Bearer {{authToken}}
+
+### Quitar like de un post (éxito - unlike)
+POST {{baseUrl}}/68d01258b33227b47fd99e3c/like
+Authorization: Bearer {{authToken}}
+
+### Dar like a un post que no existe (debería fallar)
+POST {{baseUrl}}/noExiste/like
+Authorization: Bearer {{authToken}}

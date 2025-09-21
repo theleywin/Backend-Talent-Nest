@@ -84,3 +84,61 @@ func FindUserByID(userID string) (*models.User, error) {
 
 	return &user, nil
 }
+
+func PopulatePosts(c *fiber.Ctx, posts []models.Post) ([]models.PostDto, error) {
+	userCollection := DB.Collection("users")
+	var populatedPosts []models.PostDto
+
+	for _, post := range posts {
+		// Populate author
+		var author models.UserDto
+		err := userCollection.FindOne(c.Context(), bson.M{"_id": post.Author}).Decode(&author)
+		if err != nil {
+			continue // O manejar el error según necesites
+		}
+
+		// Populate comments users
+		var populatedComments []models.CommentDto
+		for _, comment := range post.Comments {
+			var commentUser models.UserDto
+			err := userCollection.FindOne(c.Context(), bson.M{"_id": comment.User}).Decode(&commentUser)
+			if err != nil {
+				continue
+			}
+
+			populatedComment := models.CommentDto{
+				ID:        comment.Id,
+				Content:   comment.Content,
+				User:      commentUser,
+				CreatedAt: comment.CreatedAt,
+			}
+			populatedComments = append(populatedComments, populatedComment)
+		}
+
+		// Populate likes users (si necesitas información de los usuarios que dieron like)
+		var likedUsers []models.UserDto
+		for _, likeID := range post.Likes {
+			var likeUser models.UserDto
+			err := userCollection.FindOne(c.Context(), bson.M{"_id": likeID}).Decode(&likeUser)
+			if err != nil {
+				continue
+			}
+			likedUsers = append(likedUsers, likeUser)
+		}
+
+		populatedPost := models.PostDto{
+			ID:        post.Id,
+			Author:    author,
+			Content:   post.Content,
+			Image:     post.Image,
+			Likes:     likedUsers, // o mantener como []primitive.ObjectID si prefieres
+			Comments:  populatedComments,
+			CreatedAt: post.CreatedAt,
+			UpdatedAt: post.UpdatedAt,
+		}
+
+		populatedPosts = append(populatedPosts, populatedPost)
+	}
+
+	return populatedPosts, nil
+}

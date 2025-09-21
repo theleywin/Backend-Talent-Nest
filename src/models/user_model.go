@@ -23,6 +23,14 @@ type User struct {
 	Connections    []primitive.ObjectID `json:"connections" bson:"connections"`
 }
 
+type UserDto struct {
+	ID             primitive.ObjectID `bson:"_id" json:"id"`
+	Name           string             `bson:"name" json:"name"`
+	Username       string             `bson:"username" json:"username"`
+	ProfilePicture string             `bson:"profilePicture" json:"profilePicture"`
+	Headline       string             `bson:"headline" json:"headline,omitempty"`
+}
+
 type Experience struct {
 	Title       string    `json:"title" bson:"title"`
 	Company     string    `json:"company" bson:"company"`
