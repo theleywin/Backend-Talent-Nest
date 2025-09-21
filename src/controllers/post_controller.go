@@ -318,25 +318,25 @@ func CreateComment(c *fiber.Ctx) error {
 	}
 
 	// Crear notificación si el comentarista no es el autor del post
-	//TODO Implement Notifications first
-	// if postAuthor.Id != user.Id {
-	// 	newNotification := models.Notification{
-	// 		ID:          primitive.NewObjectID(),
-	// 		Recipient:   postAuthor.Id,
-	// 		Type:        "comment",
-	// 		RelatedUser: user.Id,
-	// 		RelatedPost: postID,
-	// 		CreatedAt:   time.Now(),
-	// 		IsRead:      false,
-	// 	}
+	if postAuthor.Id != user.Id {
+		newNotification := models.Notification{
+			Id:          primitive.NewObjectID(),
+			Recipient:   postAuthor.Id,
+			Type:        "comment",
+			RelatedUser: user.Id,
+			RelatedPost: postID,
+			Read:        false,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
 
-	// 	notificationsCollection := database.DB.Collection("notifications")
-	// 	_, err = notificationsCollection.InsertOne(c.Context(), newNotification)
-	// 	if err != nil {
-	// 		// Log del error pero continuar (la notificación no es crítica)
-	// 		println("Error creating notification:", err.Error())
-	// 	}
-	// }
+		notificationsCollection := lib.DB.Collection("notifications")
+		_, err = notificationsCollection.InsertOne(c.Context(), newNotification)
+		if err != nil {
+			// Log del error pero continuar (la notificación no es crítica)
+			println("Error creating notification:", err.Error())
+		}
+	}
 
 	populatedPost, err := lib.PopulatePosts(c, []models.Post{updatedPost})
 	if err != nil {
@@ -388,7 +388,7 @@ func LikePost(c *fiber.Ctx) error {
 	}
 
 	var update bson.M
-	//TODOvar shouldCreateNotification bool
+	var shouldCreateNotification bool
 
 	if alreadyLiked {
 		// Quitar like (unlike)
@@ -396,7 +396,7 @@ func LikePost(c *fiber.Ctx) error {
 			"$pull": bson.M{"likes": user.Id},
 			"$set":  bson.M{"updatedAt": time.Now()},
 		}
-		//TODOshouldCreateNotification = false
+		shouldCreateNotification = false
 	} else {
 		// Agregar like
 		update = bson.M{
@@ -404,7 +404,7 @@ func LikePost(c *fiber.Ctx) error {
 			"$set":  bson.M{"updatedAt": time.Now()},
 		}
 		// Crear notificación solo si el usuario no es el autor del post
-		//TODOshouldCreateNotification = (post.Author != user.Id)
+		shouldCreateNotification = (post.Author != user.Id)
 	}
 
 	// Actualizar el post
@@ -426,25 +426,25 @@ func LikePost(c *fiber.Ctx) error {
 	}
 
 	// Crear notificación si es necesario
-	// TODO implement notifications first
-	// if shouldCreateNotification {
-	// 	newNotification := models.Notification{
-	// 		ID:          primitive.NewObjectID(),
-	// 		Recipient:   post.Author,
-	// 		Type:        "like",
-	// 		RelatedUser: user.ID,
-	// 		RelatedPost: postID,
-	// 		CreatedAt:   time.Now(),
-	// 		IsRead:      false,
-	// 	}
+	if shouldCreateNotification {
+		newNotification := models.Notification{
+			Id:          primitive.NewObjectID(),
+			Recipient:   post.Author,
+			Type:        "like",
+			RelatedUser: user.Id,
+			RelatedPost: postID,
+			Read:        false,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
 
-	// 	notificationsCollection := database.DB.Collection("notifications")
-	// 	_, err = notificationsCollection.InsertOne(c.Context(), newNotification)
-	// 	if err != nil {
-	// 		// Log del error pero continuar (la notificación no es crítica)
-	// 		println("Error creating notification:", err.Error())
-	// 	}
-	// }
+		notificationsCollection := lib.DB.Collection("notifications")
+		_, err = notificationsCollection.InsertOne(c.Context(), newNotification)
+		if err != nil {
+			// Log del error pero continuar (la notificación no es crítica)
+			println("Error creating notification:", err.Error())
+		}
+	}
 
 	// Popular el post actualizado para la respuesta
 	populatedPost, err := lib.PopulatePosts(c, []models.Post{updatedPost})

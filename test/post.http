@@ -10,7 +10,7 @@ Content-Type: application/json
   "password": "password123"
 }
 
-@authToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg1NTI5NDAsInVzZXJJZCI6IjY4Y2EyODgxYTllMDY2MmUyMTUxZDlkNyJ9.h0CfNyfjD70RUVjhwqveknxEn_SVMNvQJH1FhYOE6c0"
+@authToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg1NzMwMzIsInVzZXJJZCI6IjY4Y2NjMjE1YTljY2ZkOGJlODVjNjY2YSJ9.CjAEa2h6EQK3l9EIGxQXoeWapZeGtmnmuMNFS53d9is"
 
 ###Create post test
 

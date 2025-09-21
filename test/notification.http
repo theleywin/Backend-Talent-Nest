@@ -1,0 +1,23 @@
+@baseUrl = http://localhost:3000/api/v1/notifications
+@contentType = application/json 
+
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg1NzMzOTIsInVzZXJJZCI6IjY4Y2EyODgxYTllMDY2MmUyMTUxZDlkNyJ9.rQPA5hX-CQopJ_vweOoEW8YxZSOgZk_HmggUtThyIdY
+
+### Obtener notificaciones del usuario
+GET {{baseUrl}}
+Cookie: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg1NzMzOTIsInVzZXJJZCI6IjY4Y2EyODgxYTllMDY2MmUyMTUxZDlkNyJ9.rQPA5hX-CQopJ_vweOoEW8YxZSOgZk_HmggUtThyIdY
+
+### Obtener notificaciones sin autenticación (debería fallar)
+GET {{baseUrl}}/
+
+### Obtener notificaciones con token inválido (debería fallar)
+GET {{baseUrl}}/
+Cookie: : Bearer token_invalido_aqui
+
+###Test para mark has read 
+PUT {{baseUrl}}/68d0618bd36a4e44d619b4cf/read
+Cookie:  eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg1NzMzOTIsInVzZXJJZCI6IjY4Y2EyODgxYTllMDY2MmUyMTUxZDlkNyJ9.rQPA5hX-CQopJ_vweOoEW8YxZSOgZk_HmggUtThyIdY
+
+### Test para eliminar una notificación
+DELETE {{baseUrl}}/68d0618bd36a4e44d619b4cf
+Cookie:  eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg1NzMzOTIsInVzZXJJZCI6IjY4Y2EyODgxYTllMDY2MmUyMTUxZDlkNyJ9.rQPA5hX-CQopJ_vweOoEW8YxZSOgZk_HmggUtThyIdY
