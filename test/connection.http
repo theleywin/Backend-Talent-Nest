@@ -1,0 +1,51 @@
+
+@baseUrl = http://localhost:3000/api/v1
+
+@targetUserId = "68ca28f1a9e0662e2151d9d8"
+
+@authToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg2NzY4NDEsInVzZXJJZCI6IjY4Y2EyODgxYTllMDY2MmUyMTUxZDlkNyJ9.s2LTM2JixX9ADXILLVTZj1hKa8_rhC6dR_qGAsC0868
+
+### Enviar solicitud de conexión a otro usuario (éxito)
+POST {{baseUrl}}/connections/request/68ca28f1a9e0662e2151d9d8
+Authorization: Bearer {{authToken}}
+
+### Enviar solicitud a uno mismo (debería fallar)
+POST {{baseUrl}}/connections/request/68ca2881a9e0662e2151d9d7
+Authorization: Bearer {{authToken}}
+
+### Enviar solicitud a usuario ya conectado (debería fallar)
+POST {{baseUrl}}/connections/request/68ca28f1a9e0662e2151d9d8
+Authorization: Bearer {{authToken}}
+
+### Enviar solicitud con ID inválido (debería fallar)
+POST {{baseUrl}}/connections/request/invalid_user_id
+Authorization: Bearer {{authToken}}
+
+### Aceptar solicitud de conexión (éxito)
+PUT {{baseUrl}}/connections/accept/68d20de8cea466d54c239f92
+Cookie: jwt-talentnest=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg2NzgzMTgsInVzZXJJZCI6IjY4Y2EyOGYxYTllMDY2MmUyMTUxZDlkOCJ9.LIjrRT1aiCKnecXPEjt1RBXceq31MJAWN6k7Yf9APVE
+
+### Aceptar solicitud inexistente (debería fallar)
+PUT {{baseUrl}}/connections/accept/68d1f74f64cdea5a20fe8888
+
+### Rechazar solicitud de conexión (éxito)
+PUT {{baseUrl}}/connections/reject/68d2040da22a54994ffda0e1
+Cookie: jwt-talentnest=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg2ODAzODgsInVzZXJJZCI6IjY4Y2M0MzIxYzZlZTlkMGIzOGI4OTYyYyJ9.DgAhMVjWKi8lDzH6A6AZmzhaLG5QtuWrDFyf3tqW6LM
+
+
+### Get connections requests (éxito)
+GET {{baseUrl}}/connections/requests
+Cookie: jwt-talentnest=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg2ODE0MzcsInVzZXJJZCI6IjY4Y2NjMjE1YTljY2ZkOGJlODVjNjY2YSJ9.rsqRvh4uklHXtCilrFVVNU9I4Tfm1wLPXy2t8gK1EGU
+
+### Get connections (éxito)
+GET {{baseUrl}}/connections
+Cookie: jwt-talentnest=yJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg2ODI5MDYsInVzZXJJZCI6IjY4Y2EyOGYxYTllMDY2MmUyMTUxZDlkOCJ9.HYK-NAQacaWJyseiqaj6HcmJ1znetjLuEjdSWU5h_ak;
+
+### Remove connection (éxito)
+DELETE {{baseUrl}}/connections/68ca28f1a9e0662e2151d9d8
+Cookie: jwt-talentnest=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg2ODIyMjEsInVzZXJJZCI6IjY4Y2EyODgxYTllMDY2MmUyMTUxZDlkNyJ9.paYP7UQ334GeovgIs5DR2UXIwotdbxOPjVnKjHE3VA0
+
+
+### Get connection status (éxito)
+GET {{baseUrl}}/connections/status/68ccc215a9ccfd8be85c666a
+Cookie: jwt-talentnest=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg2ODIyMjEsInVzZXJJZCI6IjY4Y2EyODgxYTllMDY2MmUyMTUxZDlkNyJ9.paYP7UQ334GeovgIs5DR2UXIwotdbxOPjVnKjHE3VA0

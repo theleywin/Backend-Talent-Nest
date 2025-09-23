@@ -31,6 +31,7 @@ func main() {
 	routes.AuthRoutes(app)
 	routes.PostRoutes(app)
 	routes.NotificationRoutes(app)
+	routes.ConnectionRoutes(app)
 
 	// Get the server port from environment variable or use default
 	var port string = os.Getenv("PORT")
