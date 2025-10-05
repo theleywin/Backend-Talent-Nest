@@ -7,8 +7,6 @@
 bin/
 dist/
 
-# Archivos de test
-*.test
 
 # Archivos de coverage
 *.out

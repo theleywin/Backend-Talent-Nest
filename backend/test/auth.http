@@ -10,8 +10,8 @@ Content-Type: {{contentType}}
 
 {
   "name": "Usuario Prueba",
-  "username": "testuser3",
-  "email": "test@example3.com",
+  "username": "testuser2",
+  "email": "test@example2.com",
   "password": "password123"
 }
 
