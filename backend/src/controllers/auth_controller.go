@@ -202,10 +202,17 @@ func GetCurrentUser(c *fiber.Ctx) error {
 
 // Logout clears the authentication cookie to log out the user
 func Logout(c *fiber.Ctx) error {
-
-	c.ClearCookie("jwt-talentnest")
-
+	c.Cookie(&fiber.Cookie{
+		Name:     "jwt-talentnest",
+		Value:    "",
+		Expires:  time.Now().Add(-1 * time.Hour),
+		HTTPOnly: true,
+		SameSite: "Strict", // Usa "Lax" si tienes problemas en local
+		Secure:   false,    // true en producción con HTTPS
+		Path:     "/",      // Debe coincidir con el path original
+	})
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Logged out successfully",
 	})
 }
+

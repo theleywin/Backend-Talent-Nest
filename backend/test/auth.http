@@ -42,8 +42,8 @@ POST {{baseUrl}}/auth/login
 Content-Type: {{contentType}}
 
 {
-  "username": "testuser",
-  "password": "contrasena_incorrecta"
+  "username": "pablo",
+  "password": "123456"
 }
 
 ### 5. Login con campos faltantes
@@ -58,7 +58,7 @@ Content-Type: {{contentType}}
 ### 6. Obtener usuario actual (éxito)
 # @name getCurrentUser
 GET {{baseUrl}}/auth/me
-Cookie: jwt-talentnest={{authToken}}
+Cookie: jwt-talentnest=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTk2OTEzNzksInVzZXJJZCI6IjY4ZTE2YzliM2RmODYxYzI3MmE0MzRjMiJ9.FXodXi2RMdb1v_hszn8fIHhqHFWsZldDuiZM1I6B8UQ
 
 ### 7. Obtener usuario actual sin token (debe fallar)
 GET {{baseUrl}}/auth/me

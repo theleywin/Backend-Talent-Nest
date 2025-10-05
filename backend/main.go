@@ -15,13 +15,12 @@ func main() {
 
 	app := fiber.New()
 
-	// Enable CORS middleware for cross-origin requests
-	app.Use(cors.New())
-	// Or extend your config for customization
-	// app.Use(cors.New(cors.Config{
-	//  AllowOrigins: "https://gofiber.io, https://gofiber.net",
-	//  AllowHeaders: "Origin, Content-Type, Accept",
-	// }))
+	app.Use(cors.New(cors.Config{
+    		AllowOrigins:     "http://localhost:5173",
+    		AllowCredentials: true,
+    		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+    		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS",
+    	}))
 
 	// Connect to MongoDB database
 	lib.ConnectDB()

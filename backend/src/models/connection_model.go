@@ -7,7 +7,7 @@ import (
 )
 
 type Connection struct {
-	Id        primitive.ObjectID `json:"id" bson:"_id,omitempty"`
+	Id        primitive.ObjectID `json:"_id" bson:"_id,omitempty"`
 	Sender    primitive.ObjectID `json:"sender" bson:"sender"`
 	Recipient primitive.ObjectID `json:"recipient" bson:"recipient"`
 	Status    ConnectionStatus   `json:"status" bson:"status"` // pending, accepted, rejected

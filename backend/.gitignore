@@ -40,7 +40,7 @@ temp/
 
 # IDE y editores
 .vscode/
-.idea/
+backend/.idea/
 *.swp
 *.swo
 *~

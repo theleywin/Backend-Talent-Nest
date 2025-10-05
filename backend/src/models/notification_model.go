@@ -7,7 +7,7 @@ import (
 )
 
 type Notification struct {
-	Id          primitive.ObjectID `json:"id" bson:"_id,omitempty"`
+	Id          primitive.ObjectID `json:"_id" bson:"_id,omitempty"`
 	Recipient   primitive.ObjectID `json:"recipient" bson:"recipient"`
 	Type        NotificationType   `json:"type" bson:"type"`
 	RelatedUser primitive.ObjectID `json:"related_user,omitempty" bson:"related_user,omitempty"`

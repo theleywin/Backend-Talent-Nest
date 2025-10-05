@@ -7,7 +7,7 @@ import (
 )
 
 type Post struct {
-	Id        primitive.ObjectID   `json:"id" bson:"_id,omitempty"`
+	Id        primitive.ObjectID   `json:"_id" bson:"_id,omitempty"`
 	Author    primitive.ObjectID   `json:"author" bson:"author"`
 	Content   string               `json:"content" bson:"content"`
 	Image     string               `json:"image" bson:"image"`
@@ -18,7 +18,7 @@ type Post struct {
 }
 
 type PostDto struct {
-	ID        primitive.ObjectID `json:"id"`
+	ID        primitive.ObjectID `json:"_id"`
 	Author    UserDto            `json:"author"`
 	Content   string             `json:"content,omitempty"`
 	Image     string             `json:"image,omitempty"`
@@ -29,14 +29,14 @@ type PostDto struct {
 }
 
 type Comment struct {
-	Id        primitive.ObjectID `json:"id" bson:"_id,omitempty"`
+	Id        primitive.ObjectID `json:"_id" bson:"_id,omitempty"`
 	Content   string             `json:"content" bson:"content"`
 	User      primitive.ObjectID `json:"user" bson:"user"`
 	CreatedAt time.Time          `json:"created_at" bson:"created_at"`
 }
 
 type CommentDto struct {
-	ID        primitive.ObjectID `json:"id"`
+	ID        primitive.ObjectID `json:"_id"`
 	Content   string             `json:"content"`
 	User      UserDto            `json:"user"`
 	CreatedAt time.Time          `json:"createdAt"`
