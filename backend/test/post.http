@@ -20,7 +20,8 @@ Content-Type: {{contentType}}
 Cookie: jwt-talentnest={{authToken}}
 
 {
-  "content": "Este es mi primer post de prueba sin imagen"
+  "content": "Este es mi primer post de prueba sin imagen",
+  "repost": "68d01225b33227b47fd99e38"
 }
 
 ### Crear un post con imagen (Base64)
@@ -105,7 +106,7 @@ Cookie: {{{{authToken}}}}
 ### Get Post by ID
 
 ### Obtener un post por ID válido (éxito)
-GET {{baseUrl}}/68d01258b33227b47fd99e3c
+GET {{baseUrl}}/68e9bae0b3c6df8ccb6cf592
 Authorization: Bearer {{authToken}}
 
 ### Obtener un post por ID válido sin autenticación (si está permitido)

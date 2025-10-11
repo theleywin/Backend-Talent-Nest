@@ -1,8 +1,6 @@
 package middleware
 
 import (
-    "fmt"
-
 	"github.com/gofiber/fiber/v2"
 	"github.com/theleywin/Backend-Talent-Nest/src/lib"
 	"github.com/theleywin/Backend-Talent-Nest/src/models"
@@ -13,7 +11,6 @@ import (
 // ProtectRoute is a middleware that checks for a valid JWT token, authenticates the user, and attaches user data to the request context
 func ProtectRoute(c *fiber.Ctx) error {
 	token := c.Cookies("jwt-talentnest")
-	fmt.Println(token)
 	if token == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"message": "No autorizado - Token no proporcionado",

@@ -87,6 +87,7 @@ func FindUserByID(userID string) (*models.User, error) {
 
 func PopulatePosts(c *fiber.Ctx, posts []models.Post) ([]models.PostDto, error) {
 	userCollection := DB.Collection("users")
+	postCollection := DB.Collection("posts")
 	var populatedPosts []models.PostDto
 
 	for _, post := range posts {
@@ -95,6 +96,56 @@ func PopulatePosts(c *fiber.Ctx, posts []models.Post) ([]models.PostDto, error) 
 		err := userCollection.FindOne(c.Context(), bson.M{"_id": post.Author}).Decode(&author)
 		if err != nil {
 			continue // O manejar el error según necesites
+		}
+
+		// Populate repost if exists
+		var repostedPost *models.PostDto
+		if post.Repost != nil {
+			var originalPost models.Post
+			err := postCollection.FindOne(c.Context(), bson.M{"_id": *post.Repost}).Decode(&originalPost)
+			if err == nil {
+				// Populate original post author
+				var originalAuthor models.UserDto
+				err := userCollection.FindOne(c.Context(), bson.M{"_id": originalPost.Author}).Decode(&originalAuthor)
+				if err == nil {
+					// Populate original post likes
+					var originalLikedUsers []models.UserDto
+					for _, likeID := range originalPost.Likes {
+						var likeUser models.UserDto
+						err := userCollection.FindOne(c.Context(), bson.M{"_id": likeID}).Decode(&likeUser)
+						if err == nil {
+							originalLikedUsers = append(originalLikedUsers, likeUser)
+						}
+					}
+
+					// Populate original post comments
+					var originalPopulatedComments []models.CommentDto
+					for _, comment := range originalPost.Comments {
+						var commentUser models.UserDto
+						err := userCollection.FindOne(c.Context(), bson.M{"_id": comment.User}).Decode(&commentUser)
+						if err == nil {
+							populatedComment := models.CommentDto{
+								ID:        comment.Id,
+								Content:   comment.Content,
+								User:      commentUser,
+								CreatedAt: comment.CreatedAt,
+							}
+							originalPopulatedComments = append(originalPopulatedComments, populatedComment)
+						}
+					}
+
+					repostedPost = &models.PostDto{
+						ID:        originalPost.Id,
+						Author:    originalAuthor,
+						Content:   originalPost.Content,
+						Image:     originalPost.Image,
+						Likes:     originalLikedUsers,
+						Comments:  originalPopulatedComments,
+						CreatedAt: originalPost.CreatedAt,
+						UpdatedAt: originalPost.UpdatedAt,
+					}
+				}
+			}
 		}
 
 		// Populate comments users
@@ -131,6 +182,7 @@ func PopulatePosts(c *fiber.Ctx, posts []models.Post) ([]models.PostDto, error) 
 			Author:    author,
 			Content:   post.Content,
 			Image:     post.Image,
+			Repost:    repostedPost,
 			Likes:     likedUsers, // o mantener como []primitive.ObjectID si prefieres
 			Comments:  populatedComments,
 			CreatedAt: post.CreatedAt,

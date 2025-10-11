@@ -11,6 +11,7 @@ type Post struct {
 	Author    primitive.ObjectID   `json:"author" bson:"author"`
 	Content   string               `json:"content" bson:"content"`
 	Image     string               `json:"image" bson:"image"`
+	Repost    *primitive.ObjectID  `json:"repost,omitempty" bson:"repost,omitempty"`
 	Likes     []primitive.ObjectID `json:"likes" bson:"likes"`
 	Comments  []Comment            `json:"comments" bson:"comments"`
 	CreatedAt time.Time            `bson:"createdAt" json:"createdAt"`
@@ -22,6 +23,7 @@ type PostDto struct {
 	Author    UserDto            `json:"author"`
 	Content   string             `json:"content,omitempty"`
 	Image     string             `json:"image,omitempty"`
+	Repost    *PostDto           `json:"repost,omitempty"`
 	Likes     []UserDto          `json:"likes,omitempty"`
 	Comments  []CommentDto       `json:"comments,omitempty"`
 	CreatedAt time.Time          `json:"createdAt"`

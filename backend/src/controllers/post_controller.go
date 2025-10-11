@@ -62,7 +62,8 @@ func GetFeedPosts(c *fiber.Ctx) error {
 func CreatePost(c *fiber.Ctx) error {
 	type CreatePostRequest struct {
 		Content string `json:"content"`
-		Image   string `json:"image,omitempty"` // Base64 string o URL
+		Image   string `json:"image,omitempty"`  // Base64 string o URL
+		Repost  string `json:"repost,omitempty"` // ID del post a repostear
 	}
 
 	var req CreatePostRequest
@@ -99,12 +100,42 @@ func CreatePost(c *fiber.Ctx) error {
 		// imageURL = uploadResult.SecureURL
 	}
 
+	// Procesar el campo Repost si existe
+	var repostID *primitive.ObjectID
+	if req.Repost != "" {
+		// Validar que el ID del repost sea válido
+		parsedRepostID, err := primitive.ObjectIDFromHex(req.Repost)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "Invalid repost ID format",
+			})
+		}
+
+		// Verificar que el post a repostear existe
+		collection := lib.DB.Collection("posts")
+		var existingPost models.Post
+		err = collection.FindOne(c.Context(), bson.M{"_id": parsedRepostID}).Decode(&existingPost)
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+					"message": "Post to repost not found",
+				})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"message": "Error verifying repost",
+			})
+		}
+
+		repostID = &parsedRepostID
+	}
+
 	// Crear nuevo post
 	newPost := models.Post{
 		Id:        primitive.NewObjectID(),
 		Author:    user.Id,
 		Content:   req.Content,
 		Image:     imageURL,
+		Repost:    repostID,
 		Likes:     []primitive.ObjectID{},
 		Comments:  []models.Comment{},
 		CreatedAt: time.Now(),
