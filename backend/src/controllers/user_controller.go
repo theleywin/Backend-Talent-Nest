@@ -110,7 +110,6 @@ func GetPublicProfile(c *fiber.Ctx) error {
 	return c.JSON(user)
 }
 
-// UpdateProfile updates the authenticated user's profile with allowed fields
 func UpdateProfile(c *fiber.Ctx) error {
 
 	userCollection := lib.DB.Collection("users")
@@ -218,4 +217,56 @@ func UpdateProfile(c *fiber.Ctx) error {
 	updatedUser.Password = ""
 
 	return c.JSON(updatedUser)
+}
+
+func SearchUsers(c *fiber.Ctx) error {
+	query := c.Query("query")
+
+	if query == "" {
+		return c.JSON([]models.User{})
+	}
+
+	userCollection := lib.DB.Collection("users")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Create a case-insensitive regex search for both name and username
+	filter := bson.M{
+		"$or": []bson.M{
+			{"name": bson.M{"$regex": query, "$options": "i"}},
+			{"username": bson.M{"$regex": query, "$options": "i"}},
+		},
+	}
+
+	findOptions := options.Find()
+	findOptions.SetLimit(10)
+	findOptions.SetProjection(bson.M{
+		"name":            1,
+		"username":        1,
+		"profile_picture": 1,
+		"headline":        1,
+	})
+
+	cursor, err := userCollection.Find(ctx, filter, findOptions)
+	if err != nil {
+		log.Printf("Error searching users: %v", err)
+		return c.Status(500).JSON(fiber.Map{
+			"message": "Error al buscar usuarios",
+		})
+	}
+	defer cursor.Close(ctx)
+
+	var users []models.User
+	if err = cursor.All(ctx, &users); err != nil {
+		log.Printf("Error decoding users: %v", err)
+		return c.Status(500).JSON(fiber.Map{
+			"message": "Error al procesar resultados",
+		})
+	}
+
+	if users == nil {
+		users = []models.User{}
+	}
+
+	return c.JSON(users)
 }
