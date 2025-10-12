@@ -24,7 +24,7 @@ type User struct {
 }
 
 type UserDto struct {
-	ID             primitive.ObjectID `bson:"_id" json:"id"`
+	ID             primitive.ObjectID `bson:"_id" json:"_id"`
 	Name           string             `bson:"name" json:"name"`
 	Username       string             `bson:"username" json:"username"`
 	ProfilePicture string             `bson:"profilePicture" json:"profilePicture"`

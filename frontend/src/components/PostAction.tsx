@@ -1,4 +1,10 @@
-export default function PostAction({ icon, text, onClick }) {
+interface PostActionProps {
+    icon: React.ReactNode;
+    text: string;
+    onClick: () => void;
+}
+
+export default function PostAction({ icon, text, onClick }: PostActionProps) {
     return (
         <button className='flex items-center' onClick={onClick}>
             <span className='mr-1'>{icon}</span>
