@@ -80,10 +80,10 @@ docker images
 ### 5. **Desplegar MongoDB**
 
 ```bash
-docker service create \
+docker run --rm \
   --name mongodb \
   --network talentnet \
-  --publish 27017:27017 \
+  -p 27017:27017 \
   mongo:latest
 ```
 
@@ -91,10 +91,10 @@ docker service create \
 
 ```bash
 # Crear servicio del backend usando la imagen construida previamente
-docker service create \
+docker run --rm \
   --name backend \
   --network talentnet \
-  --publish published=3000,target=3000 \
+  -p 3000:3000 \
   --env MONGO_URI=mongodb://mongodb:27017 \
   --env DB_NAME=databaseName \
   --env JWT_SECRET=secret_key \
@@ -106,10 +106,10 @@ docker service create \
 
 ```bash
 # Crear servicio del frontend usando la imagen construida previamente
-docker service create \
+docker run --rm \
   --name frontend \
   --network talentnet \
-  --publish published=5173,target=5173 \
+  -p 5173:5173 \
   frontend-tn:latest
 ```
 
