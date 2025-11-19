@@ -64,7 +64,23 @@ docker images | grep frontend-tn
 cd ..
 ```
 
-#### **c) Verificar todas las imágenes**
+#### **c) Construir imagen del Frontend (React)**
+
+```bash
+# Navegar al directorio del frontend
+cd router
+
+# Construir imagen del frontend
+docker build -t router-tn:latest .
+
+# Verificar que la imagen se creó correctamente
+docker images | grep router-tn
+
+# Volver al directorio raíz
+cd ..
+```
+
+#### **d) Verificar todas las imágenes**
 
 ```bash
 # Ver todas las imágenes creadas
@@ -111,6 +127,20 @@ docker run --rm \
   --network talentnet \
   -p 5173:5173 \
   frontend-tn:latest
+```
+
+### 7. **Desplegar Router (Go)**
+
+```bash
+# Crear servicio del router usando la imagen construida previamente
+docker run -rm \
+  --name router \
+  --network talentnet \
+  -p 8080:8080 \
+  -e SERVICE_NAME=frontend \
+  -e SERVICE_PORT=5173 \
+  -e HEALTH_PATH=/ \
+  router-tn:latest
 ```
 
 ## 🔍 Verificación
