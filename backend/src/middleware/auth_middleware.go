@@ -10,10 +10,22 @@ import (
 
 // ProtectRoute is a middleware that checks for a valid JWT token, authenticates the user, and attaches user data to the request context
 func ProtectRoute(c *fiber.Ctx) error {
-	token := c.Cookies("jwt-talentnest")
-	if token == "" {
+
+	// Obtener token del header Authorization
+	authHeader := c.Get("Authorization")
+	if authHeader == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"message": "No autorizado - Token no proporcionado",
+		})
+	}
+
+	// Extraer el token (formato esperado: "Bearer <token>")
+	var token string
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		token = authHeader[7:]
+	} else {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "No autorizado - Formato de token inválido",
 		})
 	}
 

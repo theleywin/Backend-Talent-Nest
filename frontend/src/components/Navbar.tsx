@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { axiosInstance } from "../lib/axios";
 import { Link } from "react-router-dom";
+import { removeToken } from "../utils/auth.ts";
 import { Bell, Home, LogOut, User, Users } from "lucide-react";
 import { getAuthUser } from "../lib/queries";
 
@@ -24,9 +25,11 @@ const Navbar = () => {
     });
 
     const { mutate: logout } = useMutation({
-        mutationFn: () => axiosInstance.post("/auth/logout", {}, { withCredentials: true }),
+        mutationFn: () => axiosInstance.post("/auth/logout"),
         onSuccess: () => {
-            console.log("Logged outtt!");
+            // Eliminar token del localStorage
+            removeToken();
+            console.log("Logged out!");
             queryClient.invalidateQueries({ queryKey: ["authUser"] });
         },
     });

@@ -7,7 +7,7 @@ export const getAuthUser = async () => {
         console.log("éxito en obtener token" + res.data);
         return res.data;
     } catch (err: any) {
-        if (err?.response?.status === 401) {
+        if (err?.response?.status !== 200) {
             return null;
         }
         toast.error(err?.response?.data?.message || "Something went wrong");

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { axiosInstance } from "../../lib/axios";
+import { saveToken } from "../../utils/auth.ts";
 import toast from "react-hot-toast";
 import { Loader } from "lucide-react";
 
@@ -11,7 +12,12 @@ const LoginForm = () => {
 
     const { mutate: loginMutation, isLoading } = useMutation({
         mutationFn: (userData) => axiosInstance.post("/auth/login", userData),
-        onSuccess: () => {
+        onSuccess: (response) => {
+            // Guardar el token en localStorage
+            const token = response.data.token;
+            if (token) {
+                saveToken(token);
+            }
             queryClient.invalidateQueries({ queryKey: ["authUser"] });
         },
         onError: (err) => {

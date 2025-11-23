@@ -3,7 +3,6 @@ package controllers
 import (
 	"context"
 	"log"
-	"os"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -102,18 +101,9 @@ func Signup(c *fiber.Ctx) error {
 		})
 	}
 
-	cookie := fiber.Cookie{
-		Name:     "jwt-talentnest",
-		Value:    token,
-		Expires:  time.Now().Add(24 * time.Hour),
-		HTTPOnly: true,
-		SameSite: "Strict",
-		Secure:   false,
-	}
-	c.Cookie(&cookie)
-
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "Usuario registrado exitosamente",
+		"token":   token,
 	})
 }
 
@@ -173,18 +163,9 @@ func Login(c *fiber.Ctx) error {
 		})
 	}
 
-	cookie := fiber.Cookie{
-		Name:     "jwt-talentnest",
-		Value:    token,
-		Expires:  time.Now().Add(3 * 24 * time.Hour), // 3 días
-		HTTPOnly: true,
-		SameSite: "Strict",
-		Secure:   os.Getenv("APP_ENV") == "production",
-	}
-	c.Cookie(&cookie)
-
 	return c.JSON(fiber.Map{
 		"message": "Inicio de sesión exitoso",
+		"token":   token,
 	})
 }
 

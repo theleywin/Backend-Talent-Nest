@@ -1,6 +1,7 @@
 import React, {useState} from 'react'
 import {useMutation, useQueryClient} from "@tanstack/react-query";
 import { axiosInstance } from "../../lib/axios.ts";
+import { saveToken } from "../../utils/auth.ts";
 import { toast } from "react-hot-toast";
 import {Loader} from "lucide-react";
 const SignupForm = () => {
@@ -18,7 +19,12 @@ const SignupForm = () => {
             console.log("Consolologgggg == = "+res.data);
             return res.data;
         },
-        onSuccess: () => {
+        onSuccess: (data) => {
+            // Guardar el token en localStorage
+            const token = data.token;
+            if (token) {
+                saveToken(token);
+            }
             toast.success("Account created successfully");
             queryClient.invalidateQueries({ queryKey: ["authUser"] });
         },

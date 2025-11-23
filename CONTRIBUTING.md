@@ -83,6 +83,7 @@ docker images
 docker run --rm \
   --name mongodb \
   --network talentnet \
+  --network-alias database-service \
   -p 27017:27017 \
   mongo:latest
 ```
@@ -94,6 +95,7 @@ docker run --rm \
 docker run --rm \
   --name backend \
   --network talentnet \
+  --network-alias backend-service \
   -p 3000:3000 \
   --env MONGO_URI=mongodb://mongodb:27017 \
   --env DB_NAME=databaseName \
@@ -109,8 +111,25 @@ docker run --rm \
 docker run --rm \
   --name frontend \
   --network talentnet \
+  --network-alias frontend-service \
   -p 5173:5173 \
   frontend-tn:latest
+```
+
+```bash
+# Crear contenedor de navegador firefox
+docker run -d \
+  --name firefox \
+  --network talentnet \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  -e TZ=Etc/UTC \
+  -e FIREFOX_CLI="https://www.linuxserver.io/" \
+  -p 3001:3001 \
+  -p 3002:3002 \
+  --shm-size="1gb" \
+  --restart unless-stopped \
+  lscr.io/linuxserver/firefox:latest
 ```
 
 ## 🔍 Verificación
