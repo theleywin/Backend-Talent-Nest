@@ -16,12 +16,14 @@ func main() {
 	app := fiber.New()
 
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://frontend-service:5173",
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		AllowOrigins: "http://frontend-service:5173, http://localhost:5173",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 	}))
 
 	// Connect to MongoDB database
 	lib.ConnectDB()
+
+	lib.AutoMigrate()
 
 	// Register routes
 	routes.UserRoutes(app)

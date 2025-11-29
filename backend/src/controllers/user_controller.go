@@ -1,77 +1,70 @@
 package controllers
 
 import (
-	"context"
+	"fmt"
 	"log"
 	"strings"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/theleywin/Backend-Talent-Nest/src/lib"
 	"github.com/theleywin/Backend-Talent-Nest/src/models"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"gorm.io/gorm"
 )
 
 // GetSuggestedConnections returns a list of suggested users for the current user to connect with
 func GetSuggestedConnections(c *fiber.Ctx) error {
 	var user models.User = c.Locals("user").(models.User)
-	userID := user.Id
 
-	var currentUser models.User
-	userCollection := lib.DB.Collection("users")
+	// Obtener IDs de usuarios ya conectados
+	var connections []models.Connection
+	err := lib.DB.Where("(sender_id = ? OR recipient_id = ?) AND status = ?",
+		user.ID, user.ID, models.ConnectionStatusAccepted).
+		Find(&connections).Error
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	err := userCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&currentUser)
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return c.Status(404).JSON(fiber.Map{
-				"message": "Usuario no encontrado",
-			})
-		}
-		log.Printf("Error al buscar usuario: %v", err)
+		log.Printf("Error al buscar conexiones: %v", err)
 		return c.Status(500).JSON(fiber.Map{
 			"message": "Error interno del servidor",
 		})
 	}
 
-	filter := bson.M{
-		"_id": bson.M{
-			"$ne":  userID,
-			"$nin": currentUser.Connections,
-		},
+	// Crear lista de IDs a excluir (usuario actual + conexiones)
+	excludeIDs := []uint{user.ID}
+	for _, conn := range connections {
+		if conn.SenderID == user.ID {
+			excludeIDs = append(excludeIDs, conn.RecipientID)
+		} else {
+			excludeIDs = append(excludeIDs, conn.SenderID)
+		}
 	}
 
-	findOptions := options.Find()
-	findOptions.SetLimit(3)
-	findOptions.SetProjection(bson.M{
-		"name":            1,
-		"username":        1,
-		"profile_picture": 1,
-		"headline":        1,
-	})
+	// Buscar usuarios sugeridos
+	var suggestedUsers []models.User
+	err = lib.DB.Select("id", "name", "username", "profile_picture", "head_line").
+		Where("id NOT IN ?", excludeIDs).
+		Limit(3).
+		Find(&suggestedUsers).Error
 
-	cursor, err := userCollection.Find(ctx, filter, findOptions)
 	if err != nil {
 		log.Printf("Error en la consulta: %v", err)
 		return c.Status(500).JSON(fiber.Map{
 			"message": "Error al buscar usuarios sugeridos",
 		})
 	}
-	defer cursor.Close(ctx)
 
-	var suggestedUsers []models.User
-	if err = cursor.All(ctx, &suggestedUsers); err != nil {
-		log.Printf("Error al decodificar resultados: %v", err)
-		return c.Status(500).JSON(fiber.Map{
-			"message": "Error al procesar resultados",
+	// Convertir a formato de respuesta
+	var response []models.UserDto
+	for _, u := range suggestedUsers {
+		response = append(response, models.UserDto{
+			ID:             u.ID,
+			Name:           u.Name,
+			Username:       u.Username,
+			ProfilePicture: u.ProfilePicture,
+			Headline:       u.HeadLine,
 		})
 	}
 
-	return c.JSON(suggestedUsers)
+	return c.JSON(response)
 }
 
 // GetPublicProfile returns the public profile of a user by username
@@ -85,17 +78,15 @@ func GetPublicProfile(c *fiber.Ctx) error {
 		})
 	}
 
-	userCollection := lib.DB.Collection("users")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	opts := options.FindOne().SetProjection(bson.M{"password": 0})
-
 	var user models.User
-	err := userCollection.FindOne(ctx, bson.M{"username": username}, opts).Decode(&user)
+	err := lib.DB.Select("id", "name", "username", "email", "profile_picture", "cover_picture",
+		"head_line", "about", "location", "skills", "experience", "education",
+		"created_at", "updated_at").
+		Where("username = ?", username).
+		First(&user).Error
 
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if err == gorm.ErrRecordNotFound {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"message": "Usuario no encontrado",
 			})
@@ -107,31 +98,15 @@ func GetPublicProfile(c *fiber.Ctx) error {
 		})
 	}
 
+	// Poblar conexiones
+	user.Connections = user.GetConnections(lib.DB)
+
 	return c.JSON(user)
 }
 
 func UpdateProfile(c *fiber.Ctx) error {
 
-	userCollection := lib.DB.Collection("users")
-
 	var user models.User = c.Locals("user").(models.User)
-	objID := user.Id
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	allowedFields := []string{
-		"name",
-		"username",
-		"headline",
-		"about",
-		"location",
-		"profilePicture",
-		"bannerImg",
-		"skills",
-		"experience",
-		"education",
-	}
 
 	var body map[string]interface{}
 	if err := c.BodyParser(&body); err != nil {
@@ -140,24 +115,68 @@ func UpdateProfile(c *fiber.Ctx) error {
 		})
 	}
 
-	updatedData := bson.M{}
+	// Cargar el usuario actual de la base de datos
+	var currentUser models.User
+	if err := lib.DB.First(&currentUser, user.ID).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Usuario no encontrado",
+		})
+	}
 
-	for _, field := range allowedFields {
-		if value, exists := body[field]; exists && value != nil {
+	// Actualizar campos permitidos
+	if name, ok := body["name"].(string); ok {
+		currentUser.Name = name
+	}
+	if username, ok := body["username"].(string); ok {
+		currentUser.Username = username
+	}
+	if headline, ok := body["headline"].(string); ok {
+		currentUser.HeadLine = headline
+	}
+	if about, ok := body["about"].(string); ok {
+		currentUser.About = about
+	}
+	if location, ok := body["location"].(string); ok {
+		currentUser.Location = location
+	}
+	if profilePicture, ok := body["profilePicture"].(string); ok {
+		currentUser.ProfilePicture = profilePicture
+	}
+	if bannerImg, ok := body["bannerImg"].(string); ok {
+		currentUser.CoverPicture = bannerImg
+	}
 
-			switch field {
-			case "skills":
-				if skills, ok := value.([]interface{}); ok {
-					updatedData[field] = skills
-				}
-			case "experience", "education":
-				if slice, ok := value.([]interface{}); ok {
-					updatedData[field] = slice
-				}
-			default:
-				updatedData[field] = value
+	// Manejar skills (array de strings)
+	if skills, ok := body["skills"].([]interface{}); ok {
+		skillsStr := make([]string, 0, len(skills))
+		for _, s := range skills {
+			if str, ok := s.(string); ok {
+				skillsStr = append(skillsStr, str)
 			}
 		}
+		currentUser.Skills = skillsStr
+	}
+
+	// Manejar experience (array de objetos)
+	if experience, ok := body["experience"].([]interface{}); ok {
+		expArr := make([]map[string]interface{}, 0, len(experience))
+		for _, exp := range experience {
+			if expMap, ok := exp.(map[string]interface{}); ok {
+				expArr = append(expArr, expMap)
+			}
+		}
+		currentUser.Experience = expArr
+	}
+
+	// Manejar education (array de objetos)
+	if education, ok := body["education"].([]interface{}); ok {
+		eduArr := make([]map[string]interface{}, 0, len(education))
+		for _, edu := range education {
+			if eduMap, ok := edu.(map[string]interface{}); ok {
+				eduArr = append(eduArr, eduMap)
+			}
+		}
+		currentUser.Education = eduArr
 	}
 
 	// TODO
@@ -188,85 +207,67 @@ func UpdateProfile(c *fiber.Ctx) error {
 	// 	}
 	// }
 
-	updatedData["updatedAt"] = time.Now()
-
-	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
-	filter := bson.M{"_id": objID}
-	update := bson.M{"$set": updatedData}
-
-	var updatedUser models.User
-	err := userCollection.FindOneAndUpdate(ctx, filter, update, opts).Decode(&updatedUser)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error": "Usuario no encontrado",
-			})
-		}
-
-		if strings.Contains(err.Error(), "duplicate key error") && strings.Contains(err.Error(), "username") {
+	// Guardar los cambios
+	if err := lib.DB.Save(&currentUser).Error; err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") && strings.Contains(err.Error(), "username") {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 				"error": "El nombre de usuario ya está en uso",
 			})
 		}
 
+		fmt.Printf("Error al actualizar el usuario: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Error al actualizar el usuario",
 		})
 	}
 
-	updatedUser.Password = ""
+	// Poblar conexiones
+	currentUser.Connections = currentUser.GetConnections(lib.DB)
 
-	return c.JSON(updatedUser)
+	// Limpiar password antes de devolver
+	currentUser.Password = ""
+
+	return c.JSON(currentUser)
 }
 
 func SearchUsers(c *fiber.Ctx) error {
 	query := c.Query("query")
 
 	if query == "" {
-		return c.JSON([]models.User{})
+		return c.JSON([]models.UserDto{})
 	}
 
-	userCollection := lib.DB.Collection("users")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// Búsqueda case-insensitive en SQLite usando LIKE
+	searchPattern := "%" + query + "%"
 
-	// Create a case-insensitive regex search for both name and username
-	filter := bson.M{
-		"$or": []bson.M{
-			{"name": bson.M{"$regex": query, "$options": "i"}},
-			{"username": bson.M{"$regex": query, "$options": "i"}},
-		},
-	}
+	var users []models.User
+	err := lib.DB.Select("id", "name", "username", "profile_picture", "head_line").
+		Where("name LIKE ? OR username LIKE ?", searchPattern, searchPattern).
+		Limit(10).
+		Find(&users).Error
 
-	findOptions := options.Find()
-	findOptions.SetLimit(10)
-	findOptions.SetProjection(bson.M{
-		"name":            1,
-		"username":        1,
-		"profile_picture": 1,
-		"headline":        1,
-	})
-
-	cursor, err := userCollection.Find(ctx, filter, findOptions)
 	if err != nil {
 		log.Printf("Error searching users: %v", err)
 		return c.Status(500).JSON(fiber.Map{
 			"message": "Error al buscar usuarios",
 		})
 	}
-	defer cursor.Close(ctx)
 
-	var users []models.User
-	if err = cursor.All(ctx, &users); err != nil {
-		log.Printf("Error decoding users: %v", err)
-		return c.Status(500).JSON(fiber.Map{
-			"message": "Error al procesar resultados",
+	// Convertir a UserDto
+	var response []models.UserDto
+	for _, u := range users {
+		response = append(response, models.UserDto{
+			ID:             u.ID,
+			Name:           u.Name,
+			Username:       u.Username,
+			ProfilePicture: u.ProfilePicture,
+			Headline:       u.HeadLine,
 		})
 	}
 
-	if users == nil {
-		users = []models.User{}
+	if response == nil {
+		response = []models.UserDto{}
 	}
 
-	return c.JSON(users)
+	return c.JSON(response)
 }

@@ -77,18 +77,7 @@ docker images
 # mongo           latest    ghi789jkl012   X days ago      XXX MB
 ```
 
-### 5. **Desplegar MongoDB**
-
-```bash
-docker run --rm \
-  --name mongodb \
-  --network talentnet \
-  --network-alias database-service \
-  -p 27017:27017 \
-  mongo:latest
-```
-
-### 6. **Desplegar Backend (Go)**
+### 5. **Desplegar Backend (Go)**
 
 ```bash
 # Crear servicio del backend usando la imagen construida previamente
@@ -97,14 +86,13 @@ docker run --rm \
   --network talentnet \
   --network-alias backend-service \
   -p 3000:3000 \
-  --env MONGO_URI=mongodb://mongodb:27017 \
-  --env DB_NAME=databaseName \
+  --env DB_PATH=/root/data/talentnest.db \
   --env JWT_SECRET=secret_key \
   --env PORT=3000 \
   backend-tn:latest
 ```
 
-### 7. **Desplegar Frontend (React)**
+### 6. **Desplegar Frontend (React)**
 
 ```bash
 # Crear servicio del frontend usando la imagen construida previamente

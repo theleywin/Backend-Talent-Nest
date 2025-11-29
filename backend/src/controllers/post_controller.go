@@ -1,15 +1,13 @@
 package controllers
 
 import (
-	"time"
+	"fmt"
+	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/theleywin/Backend-Talent-Nest/src/lib"
 	"github.com/theleywin/Backend-Talent-Nest/src/models"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"gorm.io/gorm"
 )
 
 // GetFeedPosts returns posts for the authenticated user's feed, including posts from their connections and themselves
@@ -17,45 +15,51 @@ func GetFeedPosts(c *fiber.Ctx) error {
 	// Obtener usuario autenticado del middleware
 	user := c.Locals("user").(models.User)
 
-	// Crear array de IDs para la consulta (connections + propio usuario)
-	connectionIDs := make([]primitive.ObjectID, len(user.Connections))
-	copy(connectionIDs, user.Connections)
-	connectionIDs = append(connectionIDs, user.Id)
+	// Obtener IDs de las conexiones aceptadas
+	var connections []models.Connection
+	err := lib.DB.Where("(sender_id = ? OR recipient_id = ?) AND status = ?",
+		user.ID, user.ID, models.ConnectionStatusAccepted).
+		Find(&connections).Error
 
-	collection := lib.DB.Collection("posts")
-
-	// Consulta equivalente a: Post.find({ author: { $in: connections } })
-	filter := bson.M{
-		"author": bson.M{
-			"$in": connectionIDs,
-		},
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Error fetching connections",
+		})
 	}
 
-	opts := options.Find().SetSort(bson.M{"createdAt": -1})
-	cursor, err := collection.Find(c.Context(), filter, opts)
+	// Crear array de IDs de usuarios conectados + el propio usuario
+	connectionIDs := []uint{user.ID}
+	for _, conn := range connections {
+		if conn.SenderID == user.ID {
+			connectionIDs = append(connectionIDs, conn.RecipientID)
+		} else {
+			connectionIDs = append(connectionIDs, conn.SenderID)
+		}
+	}
+
+	// Buscar posts de usuarios conectados con Preload de relaciones
+	var posts []models.Post
+	err = lib.DB.Preload("Author").
+		Preload("Likes").
+		Preload("Comments.User").
+		Preload("Repost.Author").
+		Where("author_id IN ?", connectionIDs).
+		Order("created_at DESC").
+		Find(&posts).Error
+
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Error fetching posts",
 		})
 	}
-	defer cursor.Close(c.Context())
 
-	var posts []models.Post
-	if err := cursor.All(c.Context(), &posts); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Error decoding posts",
-		})
+	// Convertir a PostDto
+	var postDtos []models.PostDto
+	for _, post := range posts {
+		postDtos = append(postDtos, convertToPostDto(post))
 	}
 
-	// Populate manual de autores y comentarios
-	populatedPosts, err := lib.PopulatePosts(c, posts)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Error populating posts",
-		})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(populatedPosts)
+	return c.Status(fiber.StatusOK).JSON(postDtos)
 }
 
 // CreatePost creates a new post for the authenticated user, optionally uploading an image
@@ -63,7 +67,7 @@ func CreatePost(c *fiber.Ctx) error {
 	type CreatePostRequest struct {
 		Content string `json:"content"`
 		Image   string `json:"image,omitempty"`  // Base64 string o URL
-		Repost  string `json:"repost,omitempty"` // ID del post a repostear
+		Repost  *uint  `json:"repost,omitempty"` // ID del post a repostear
 	}
 
 	var req CreatePostRequest
@@ -101,22 +105,13 @@ func CreatePost(c *fiber.Ctx) error {
 	}
 
 	// Procesar el campo Repost si existe
-	var repostID *primitive.ObjectID
-	if req.Repost != "" {
-		// Validar que el ID del repost sea válido
-		parsedRepostID, err := primitive.ObjectIDFromHex(req.Repost)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"message": "Invalid repost ID format",
-			})
-		}
-
+	var repostID *uint
+	if req.Repost != nil && *req.Repost > 0 {
 		// Verificar que el post a repostear existe
-		collection := lib.DB.Collection("posts")
 		var existingPost models.Post
-		err = collection.FindOne(c.Context(), bson.M{"_id": parsedRepostID}).Decode(&existingPost)
+		err := lib.DB.First(&existingPost, *req.Repost).Error
 		if err != nil {
-			if err == mongo.ErrNoDocuments {
+			if err == gorm.ErrRecordNotFound {
 				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 					"message": "Post to repost not found",
 				})
@@ -126,39 +121,35 @@ func CreatePost(c *fiber.Ctx) error {
 			})
 		}
 
-		repostID = &parsedRepostID
+		repostID = req.Repost
 	}
 
 	// Crear nuevo post
 	newPost := models.Post{
-		Id:        primitive.NewObjectID(),
-		Author:    user.Id,
-		Content:   req.Content,
-		Image:     imageURL,
-		Repost:    repostID,
-		Likes:     []primitive.ObjectID{},
-		Comments:  []models.Comment{},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		AuthorID: user.ID,
+		Content:  req.Content,
+		Image:    imageURL,
+		RepostID: repostID,
 	}
 
-	// Guardar en MongoDB
-	collection := lib.DB.Collection("posts")
-	_, err := collection.InsertOne(c.Context(), newPost)
-	if err != nil {
+	// Guardar en la base de datos
+	if err := lib.DB.Create(&newPost).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to create post",
 		})
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(newPost)
+	// Cargar las relaciones para la respuesta
+	lib.DB.Preload("Author").Preload("Repost.Author").First(&newPost, newPost.ID)
+
+	return c.Status(fiber.StatusCreated).JSON(convertToPostDto(newPost))
 }
 
 // DeletePost deletes a post by ID if the authenticated user is the author
 func DeletePost(c *fiber.Ctx) error {
 	// Obtener ID del post desde los parámetros
 	postIDStr := c.Params("id")
-	postID, err := primitive.ObjectIDFromHex(postIDStr)
+	postID, err := strconv.ParseUint(postIDStr, 10, 32)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid post ID",
@@ -168,19 +159,22 @@ func DeletePost(c *fiber.Ctx) error {
 	// Obtener usuario autenticado
 	user := c.Locals("user").(models.User)
 
-	collection := lib.DB.Collection("posts")
-
 	// Buscar el post primero
 	var post models.Post
-	err = collection.FindOne(c.Context(), bson.M{"_id": postID}).Decode(&post)
+	err = lib.DB.First(&post, uint(postID)).Error
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Post not found",
+		if err == gorm.ErrRecordNotFound {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"message": "Post not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Error fetching post",
 		})
 	}
 
 	// Verificar que el usuario es el autor del post
-	if post.Author != user.Id {
+	if post.AuthorID != user.ID {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"message": "You are not authorized to delete this post",
 		})
@@ -191,23 +185,15 @@ func DeletePost(c *fiber.Ctx) error {
 		//TODO
 		// err := deleteImageFromCloudinary(post.Image)
 		// if err != nil {
-		//     // Puedes decidir si continuar con la eliminación del post aunque falle Cloudinary
-		//     // o retornar error. Aquí continúa pero loguea el error.
 		//     println("Error deleting image from Cloudinary:", err.Error())
 		// }
 	}
 
+	// Eliminar comentarios y likes asociados (GORM lo hace automáticamente con OnDelete:CASCADE)
 	// Eliminar el post de la base de datos
-	result, err := collection.DeleteOne(c.Context(), bson.M{"_id": postID})
-	if err != nil {
+	if err := lib.DB.Delete(&post).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to delete post",
-		})
-	}
-
-	if result.DeletedCount == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Post not found",
 		})
 	}
 
@@ -220,40 +206,40 @@ func DeletePost(c *fiber.Ctx) error {
 func GetPostByID(c *fiber.Ctx) error {
 	// Obtener ID del post desde los parámetros
 	postIDStr := c.Params("id")
-	postID, err := primitive.ObjectIDFromHex(postIDStr)
+	postID, err := strconv.ParseUint(postIDStr, 10, 32)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid post ID format",
 		})
 	}
 
-	collection := lib.DB.Collection("posts")
-
-	// Buscar el post por ID
+	// Buscar el post por ID con todas las relaciones
 	var post models.Post
-	err = collection.FindOne(c.Context(), bson.M{"_id": postID}).Decode(&post)
-	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Post not found",
-		})
-	}
+	err = lib.DB.Preload("Author").
+		Preload("Likes").
+		Preload("Comments.User").
+		Preload("Repost.Author").
+		First(&post, uint(postID)).Error
 
-	// Popular manualmente los datos del autor y comentarios
-	populatedPost, err := lib.PopulatePosts(c, []models.Post{post})
 	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"message": "Post not found",
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Error loading post data",
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(populatedPost[0])
+	return c.Status(fiber.StatusOK).JSON(convertToPostDto(post))
 }
 
 // CreateComment adds a new comment to a post by its ID
 func CreateComment(c *fiber.Ctx) error {
 	// Obtener ID del post desde los parámetros
 	postIDStr := c.Params("id")
-	postID, err := primitive.ObjectIDFromHex(postIDStr)
+	postID, err := strconv.ParseUint(postIDStr, 10, 32)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid post ID format",
@@ -262,7 +248,7 @@ func CreateComment(c *fiber.Ctx) error {
 
 	// Parsear el cuerpo de la solicitud
 	type CreateCommentRequest struct {
-		Content string `json:"content" bson:"content"`
+		Content string `json:"content"`
 	}
 
 	var req CreateCommentRequest
@@ -282,108 +268,70 @@ func CreateComment(c *fiber.Ctx) error {
 	// Obtener usuario autenticado del middleware
 	user := c.Locals("user").(models.User)
 
-	// Crear el nuevo comentario
-	newComment := models.Comment{
-		Id:        primitive.NewObjectID(),
-		User:      user.Id,
-		Content:   req.Content,
-		CreatedAt: time.Now(),
-	}
-
-	// Configurar la actualización
-	update := bson.M{
-		"$push": bson.M{
-			"comments": newComment,
-		},
-		"$set": bson.M{
-			"updatedAt": time.Now(),
-		},
-	}
-
-	// Opciones para devolver el documento actualizado
-	opts := options.FindOneAndUpdate().
-		SetReturnDocument(options.After)
-
-	// Ejecutar la actualización (equivalente a findByIdAndUpdate con {new: true})
-	postsCollection := lib.DB.Collection("posts")
-	var updatedPost models.Post
-	err = postsCollection.FindOneAndUpdate(
-		c.Context(),
-		bson.M{"_id": postID},
-		update,
-		opts,
-	).Decode(&updatedPost)
-
+	// Verificar que el post existe
+	var post models.Post
+	err = lib.DB.First(&post, uint(postID)).Error
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if err == gorm.ErrRecordNotFound {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"message": "Post not found",
 			})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Error fetching post",
+		})
+	}
+
+	// Crear el nuevo comentario
+	newComment := models.Comment{
+		PostID:  uint(postID),
+		UserID:  user.ID,
+		Content: req.Content,
+	}
+
+	if err := lib.DB.Create(&newComment).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to add comment",
 		})
 	}
 
-	// Popular el autor del post
-	usersCollection := lib.DB.Collection("users")
-	var postAuthor models.User
-	projection := bson.M{
-		"name":           1,
-		"email":          1,
-		"username":       1,
-		"headline":       1,
-		"profilePicture": 1,
-	}
-
-	err = usersCollection.FindOne(
-		c.Context(),
-		bson.M{"_id": updatedPost.Author},
-		options.FindOne().SetProjection(projection),
-	).Decode(&postAuthor)
-
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Error loading post author",
-		})
-	}
-
 	// Crear notificación si el comentarista no es el autor del post
-	if postAuthor.Id != user.Id {
+	if post.AuthorID != user.ID {
+		postIDUint := uint(postID)
 		newNotification := models.Notification{
-			Id:          primitive.NewObjectID(),
-			Recipient:   postAuthor.Id,
-			Type:        "comment",
-			RelatedUser: user.Id,
-			RelatedPost: postID,
-			Read:        false,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			RecipientID:   post.AuthorID,
+			Type:          "comment",
+			RelatedUserID: &user.ID,
+			RelatedPostID: &postIDUint,
+			Read:          false,
 		}
 
-		notificationsCollection := lib.DB.Collection("notifications")
-		_, err = notificationsCollection.InsertOne(c.Context(), newNotification)
-		if err != nil {
-			// Log del error pero continuar (la notificación no es crítica)
-			println("Error creating notification:", err.Error())
+		if err := lib.DB.Create(&newNotification).Error; err != nil {
+			fmt.Printf("Error creating notification: %v\n", err)
 		}
 	}
 
-	populatedPost, err := lib.PopulatePosts(c, []models.Post{updatedPost})
+	// Recargar el post con todas las relaciones
+	err = lib.DB.Preload("Author").
+		Preload("Likes").
+		Preload("Comments.User").
+		Preload("Repost.Author").
+		First(&post, uint(postID)).Error
+
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Error loading post details",
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(populatedPost[0])
+	return c.Status(fiber.StatusOK).JSON(convertToPostDto(post))
 }
 
 // LikePost toggles a like/unlike for a post by the authenticated user
 func LikePost(c *fiber.Ctx) error {
 	// Obtener ID del post desde los parámetros
 	postIDStr := c.Params("id")
-	postID, err := primitive.ObjectIDFromHex(postIDStr)
+	postID, err := strconv.ParseUint(postIDStr, 10, 32)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid post ID format",
@@ -393,13 +341,11 @@ func LikePost(c *fiber.Ctx) error {
 	// Obtener usuario autenticado del middleware
 	user := c.Locals("user").(models.User)
 
-	postsCollection := lib.DB.Collection("posts")
-
-	// Primero buscar el post para verificar si ya tiene like
+	// Buscar el post
 	var post models.Post
-	err = postsCollection.FindOne(c.Context(), bson.M{"_id": postID}).Decode(&post)
+	err = lib.DB.Preload("Likes").First(&post, uint(postID)).Error
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if err == gorm.ErrRecordNotFound {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"message": "Post not found",
 			})
@@ -410,80 +356,132 @@ func LikePost(c *fiber.Ctx) error {
 	}
 
 	// Verificar si el usuario ya dio like al post
-	alreadyLiked := false
-	for _, likeID := range post.Likes {
-		if likeID == user.Id {
-			alreadyLiked = true
-			break
-		}
-	}
+	var existingLike models.Like
+	err = lib.DB.Where("post_id = ? AND user_id = ?", uint(postID), user.ID).First(&existingLike).Error
 
-	var update bson.M
 	var shouldCreateNotification bool
 
-	if alreadyLiked {
-		// Quitar like (unlike)
-		update = bson.M{
-			"$pull": bson.M{"likes": user.Id},
-			"$set":  bson.M{"updatedAt": time.Now()},
+	if err == nil {
+		// Ya existe el like, eliminarlo (unlike)
+		if err := lib.DB.Delete(&existingLike).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"message": "Failed to unlike post",
+			})
 		}
 		shouldCreateNotification = false
-	} else {
-		// Agregar like
-		update = bson.M{
-			"$push": bson.M{"likes": user.Id},
-			"$set":  bson.M{"updatedAt": time.Now()},
+	} else if err == gorm.ErrRecordNotFound {
+		// No existe el like, crearlo
+		newLike := models.Like{
+			PostID: uint(postID),
+			UserID: user.ID,
+		}
+		if err := lib.DB.Create(&newLike).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"message": "Failed to like post",
+			})
 		}
 		// Crear notificación solo si el usuario no es el autor del post
-		shouldCreateNotification = (post.Author != user.Id)
-	}
-
-	// Actualizar el post
-	opts := options.FindOneAndUpdate().
-		SetReturnDocument(options.After)
-
-	var updatedPost models.Post
-	err = postsCollection.FindOneAndUpdate(
-		c.Context(),
-		bson.M{"_id": postID},
-		update,
-		opts,
-	).Decode(&updatedPost)
-
-	if err != nil {
+		shouldCreateNotification = (post.AuthorID != user.ID)
+	} else {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to update post",
+			"message": "Error checking like status",
 		})
 	}
 
 	// Crear notificación si es necesario
 	if shouldCreateNotification {
+		postIDUint := uint(postID)
 		newNotification := models.Notification{
-			Id:          primitive.NewObjectID(),
-			Recipient:   post.Author,
-			Type:        "like",
-			RelatedUser: user.Id,
-			RelatedPost: postID,
-			Read:        false,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			RecipientID:   post.AuthorID,
+			Type:          "like",
+			RelatedUserID: &user.ID,
+			RelatedPostID: &postIDUint,
+			Read:          false,
 		}
 
-		notificationsCollection := lib.DB.Collection("notifications")
-		_, err = notificationsCollection.InsertOne(c.Context(), newNotification)
-		if err != nil {
-			// Log del error pero continuar (la notificación no es crítica)
-			println("Error creating notification:", err.Error())
+		if err := lib.DB.Create(&newNotification).Error; err != nil {
+			fmt.Printf("Error creating notification: %v\n", err)
 		}
 	}
 
-	// Popular el post actualizado para la respuesta
-	populatedPost, err := lib.PopulatePosts(c, []models.Post{updatedPost})
+	// Recargar el post con todas las relaciones
+	err = lib.DB.Preload("Author").
+		Preload("Likes").
+		Preload("Comments.User").
+		Preload("Repost.Author").
+		First(&post, uint(postID)).Error
+
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Error loading post details",
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(populatedPost[0])
+	return c.Status(fiber.StatusOK).JSON(convertToPostDto(post))
+}
+
+// Helper function to convert Post model to PostDto
+func convertToPostDto(post models.Post) models.PostDto {
+	postDto := models.PostDto{
+		ID: post.ID,
+		Author: models.UserDto{
+			ID:             post.Author.ID,
+			Name:           post.Author.Name,
+			Username:       post.Author.Username,
+			ProfilePicture: post.Author.ProfilePicture,
+			Headline:       post.Author.HeadLine,
+		},
+		Content:   post.Content,
+		Image:     post.Image,
+		CreatedAt: post.CreatedAt,
+		UpdatedAt: post.UpdatedAt,
+	}
+
+	// Convert Likes
+	for _, like := range post.Likes {
+		postDto.Likes = append(postDto.Likes, models.UserDto{
+			ID:             like.User.ID,
+			Name:           like.User.Name,
+			Username:       like.User.Username,
+			ProfilePicture: like.User.ProfilePicture,
+			Headline:       like.User.HeadLine,
+		})
+	}
+
+	// Convert Comments
+	for _, comment := range post.Comments {
+		postDto.Comments = append(postDto.Comments, models.CommentDto{
+			ID:      comment.ID,
+			Content: comment.Content,
+			User: models.UserDto{
+				ID:             comment.User.ID,
+				Name:           comment.User.Name,
+				Username:       comment.User.Username,
+				ProfilePicture: comment.User.ProfilePicture,
+				Headline:       comment.User.HeadLine,
+			},
+			CreatedAt: comment.CreatedAt,
+		})
+	}
+
+	// Convert Repost if exists
+	if post.RepostID != nil && post.Repost != nil {
+		repostDto := models.PostDto{
+			ID: post.Repost.ID,
+			Author: models.UserDto{
+				ID:             post.Repost.Author.ID,
+				Name:           post.Repost.Author.Name,
+				Username:       post.Repost.Author.Username,
+				ProfilePicture: post.Repost.Author.ProfilePicture,
+				Headline:       post.Repost.Author.HeadLine,
+			},
+			Content:   post.Repost.Content,
+			Image:     post.Repost.Image,
+			CreatedAt: post.Repost.CreatedAt,
+			UpdatedAt: post.Repost.UpdatedAt,
+		}
+		postDto.Repost = &repostDto
+	}
+
+	return postDto
 }

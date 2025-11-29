@@ -1,34 +1,27 @@
 package lib
 
 import (
-	"context"
 	"log"
 	"os"
 
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
-var DB *mongo.Database
+var DB *gorm.DB
 
-// ConnectDB initializes the MongoDB connection and sets the global DB variable
+// ConnectDB initializes the SQLite connection and sets the global DB variable
 func ConnectDB() {
-
-	var db_url string = os.Getenv("MONGO_URI")
-	if db_url == "" {
-		db_url = "mongodb://localhost:27017"
+	var dbPath string = os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "./talentnest.db"
 	}
 
-	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(db_url))
+	var err error
+	DB, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
-		panic(err)
+		panic("Failed to connect to database: " + err.Error())
 	}
 
-	var db_name string = os.Getenv("DB_NAME")
-	if db_name == "" {
-		db_name = "databaseName"
-	}
-
-	DB = client.Database(db_name)
-	log.Println("Connected to MongoDB!")
+	log.Println("Connected to SQLite!")
 }

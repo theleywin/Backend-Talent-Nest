@@ -2,15 +2,12 @@ package controllers
 
 import (
 	"fmt"
-	"time"
+	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/theleywin/Backend-Talent-Nest/src/lib"
 	"github.com/theleywin/Backend-Talent-Nest/src/models"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"gorm.io/gorm"
 )
 
 // GetUserNotifications returns all notifications for the authenticated user, populating related user and post data
@@ -18,23 +15,18 @@ func GetUserNotifications(c *fiber.Ctx) error {
 	// Obtener usuario autenticado del middleware
 	user := c.Locals("user").(models.User)
 
-	// Obtener notificaciones del usuario ordenadas por fecha
-	collection := lib.DB.Collection("notifications")
-	filter := bson.M{"recipient": user.Id}
-	opts := options.Find().SetSort(bson.M{"createdAt": -1})
+	// Obtener notificaciones del usuario ordenadas por fecha con relaciones precargadas
+	var notifications []models.Notification
+	err := lib.DB.Preload("RelatedUser", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id", "name", "username", "profile_picture")
+	}).Preload("RelatedPost", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id", "content", "image")
+	}).Where("recipient_id = ?", user.ID).
+		Order("created_at DESC").
+		Find(&notifications).Error
 
-	cursor, err := collection.Find(c.Context(), filter, opts)
 	if err != nil {
 		fmt.Printf("Error finding notifications: %v\n", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Internal server error",
-		})
-	}
-	defer cursor.Close(c.Context())
-
-	var notifications []models.Notification
-	if err := cursor.All(c.Context(), &notifications); err != nil {
-		fmt.Printf("Error decoding notifications: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Internal server error",
 		})
@@ -42,67 +34,45 @@ func GetUserNotifications(c *fiber.Ctx) error {
 
 	// Crear slice para la respuesta
 	type NotificationResponse struct {
-		ID          primitive.ObjectID      `json:"id" bson:"_id"`
-		Recipient   primitive.ObjectID      `json:"recipient" bson:"recipient"`
-		Type        models.NotificationType `json:"type" bson:"type"`
-		Read        bool                    `json:"read" bson:"read"`
-		CreatedAt   time.Time               `json:"createdAt" bson:"createdAt"`
-		UpdatedAt   time.Time               `json:"updatedAt" bson:"updatedAt"`
-		RelatedUser *models.User            `json:"relatedUser,omitempty" bson:"relatedUser,omitempty"`
-		RelatedPost *models.Post            `json:"relatedPost,omitempty" bson:"relatedPost,omitempty"`
+		ID          uint        `json:"id"`
+		Recipient   uint        `json:"recipient"`
+		Type        string      `json:"type"`
+		Read        bool        `json:"read"`
+		CreatedAt   string      `json:"createdAt"`
+		UpdatedAt   string      `json:"updatedAt"`
+		RelatedUser interface{} `json:"relatedUser,omitempty"`
+		RelatedPost interface{} `json:"relatedPost,omitempty"`
 	}
 
 	var response []NotificationResponse
 
-	// Procesar cada notificación para popular los datos relacionados
+	// Procesar cada notificación
 	for _, notification := range notifications {
 		respItem := NotificationResponse{
-			ID:        notification.Id,
-			Recipient: notification.Recipient,
+			ID:        notification.ID,
+			Recipient: notification.RecipientID,
 			Type:      notification.Type,
 			Read:      notification.Read,
-			CreatedAt: notification.CreatedAt,
-			UpdatedAt: notification.UpdatedAt,
+			CreatedAt: notification.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt: notification.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
 
 		// Popular usuario relacionado si existe
-		if !notification.RelatedUser.IsZero() {
-			var relatedUser models.User
-			usersCollection := lib.DB.Collection("users")
-			err := usersCollection.FindOne(
-				c.Context(),
-				bson.M{"_id": notification.RelatedUser},
-				options.FindOne().SetProjection(bson.M{
-					"name":            1,
-					"username":        1,
-					"profile_picture": 1,
-				}),
-			).Decode(&relatedUser)
-
-			if err == nil {
-				respItem.RelatedUser = &relatedUser
-			} else if err != mongo.ErrNoDocuments {
-				fmt.Printf("Error finding related user: %v\n", err)
+		if notification.RelatedUserID != nil && notification.RelatedUser != nil {
+			respItem.RelatedUser = map[string]interface{}{
+				"_id":            notification.RelatedUser.ID,
+				"name":           notification.RelatedUser.Name,
+				"username":       notification.RelatedUser.Username,
+				"profilePicture": notification.RelatedUser.ProfilePicture,
 			}
 		}
 
 		// Popular post relacionado si existe
-		if !notification.RelatedPost.IsZero() {
-			var relatedPost models.Post
-			postsCollection := lib.DB.Collection("posts")
-			err := postsCollection.FindOne(
-				c.Context(),
-				bson.M{"_id": notification.RelatedPost},
-				options.FindOne().SetProjection(bson.M{
-					"content": 1,
-					"image":   1,
-				}),
-			).Decode(&relatedPost)
-
-			if err == nil {
-				respItem.RelatedPost = &relatedPost
-			} else if err != mongo.ErrNoDocuments {
-				fmt.Printf("Error finding related post: %v\n", err)
+		if notification.RelatedPostID != nil && notification.RelatedPost != nil {
+			respItem.RelatedPost = map[string]interface{}{
+				"_id":     notification.RelatedPost.ID,
+				"content": notification.RelatedPost.Content,
+				"image":   notification.RelatedPost.Image,
 			}
 		}
 
@@ -116,7 +86,7 @@ func GetUserNotifications(c *fiber.Ctx) error {
 func MarkNotificationAsRead(c *fiber.Ctx) error {
 	// Obtener ID de la notificación desde los parámetros
 	notificationIDStr := c.Params("id")
-	notificationID, err := primitive.ObjectIDFromHex(notificationIDStr)
+	notificationID, err := strconv.ParseUint(notificationIDStr, 10, 32)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid notification ID format",
@@ -126,27 +96,13 @@ func MarkNotificationAsRead(c *fiber.Ctx) error {
 	// Obtener usuario autenticado del middleware
 	user := c.Locals("user").(models.User)
 
-	// Configurar la actualización
-	filter := bson.M{
-		"_id":       notificationID,
-		"recipient": user.Id, // Solo permitir actualizar notificaciones del usuario autenticado
-	}
-	update := bson.M{
-		"$set": bson.M{
-			"read":      true,
-			"updatedAt": time.Now(),
-		},
-	}
-	opts := options.FindOneAndUpdate().
-		SetReturnDocument(options.After) // Devolver el documento actualizado
-
-	// Ejecutar la actualización
-	collection := lib.DB.Collection("notifications")
-	var updatedNotification models.Notification
-	err = collection.FindOneAndUpdate(c.Context(), filter, update, opts).Decode(&updatedNotification)
+	// Buscar y actualizar la notificación
+	var notification models.Notification
+	err = lib.DB.Where("id = ? AND recipient_id = ?", uint(notificationID), user.ID).
+		First(&notification).Error
 
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if err == gorm.ErrRecordNotFound {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"message": "Notification not found or you don't have permission to update it",
 			})
@@ -157,14 +113,23 @@ func MarkNotificationAsRead(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(updatedNotification)
+	// Actualizar el campo read
+	notification.Read = true
+	if err := lib.DB.Save(&notification).Error; err != nil {
+		fmt.Printf("Error updating notification: %v\n", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Internal server error",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(notification)
 }
 
 // DeleteNotification deletes a notification for the authenticated user
 func DeleteNotification(c *fiber.Ctx) error {
 	// Obtener ID de la notificación desde los parámetros
 	notificationIDStr := c.Params("id")
-	notificationID, err := primitive.ObjectIDFromHex(notificationIDStr)
+	notificationID, err := strconv.ParseUint(notificationIDStr, 10, 32)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid notification ID format",
@@ -174,26 +139,28 @@ func DeleteNotification(c *fiber.Ctx) error {
 	// Obtener usuario autenticado del middleware
 	user := c.Locals("user").(models.User)
 
-	// Configurar el filtro para eliminar solo notificaciones del usuario autenticado
-	filter := bson.M{
-		"_id":       notificationID,
-		"recipient": user.Id,
-	}
+	// Buscar la notificación primero para verificar que existe y pertenece al usuario
+	var notification models.Notification
+	err = lib.DB.Where("id = ? AND recipient_id = ?", uint(notificationID), user.ID).
+		First(&notification).Error
 
-	// Ejecutar la eliminación
-	collection := lib.DB.Collection("notifications")
-	result, err := collection.DeleteOne(c.Context(), filter)
 	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"message": "Notification not found or you don't have permission to delete it",
+			})
+		}
 		fmt.Printf("Error in DeleteNotification: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Server error",
 		})
 	}
 
-	// Verificar si se eliminó algún documento
-	if result.DeletedCount == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Notification not found or you don't have permission to delete it",
+	// Eliminar la notificación
+	if err := lib.DB.Delete(&notification).Error; err != nil {
+		fmt.Printf("Error deleting notification: %v\n", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "Server error",
 		})
 	}
 
