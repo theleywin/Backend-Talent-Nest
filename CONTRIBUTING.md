@@ -86,7 +86,6 @@ docker run --rm \
   --network talentnet \
   --network-alias backend-service \
   -p 3000:3000 \
-  --env DB_PATH=/root/data/talentnest.db \
   --env JWT_SECRET=secret_key \
   --env PORT=3000 \
   backend-tn:latest
