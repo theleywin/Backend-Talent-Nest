@@ -1,16 +1,12 @@
 package lib
 
 import (
-	"context"
 	"os"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/theleywin/Backend-Talent-Nest/src/models"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // Returns a map with a message key for API responses
@@ -21,7 +17,7 @@ func MessageResponse(message string) fiber.Map {
 }
 
 // Generates a JWT token for the given user ID
-func GenerateJWT(userID interface{}) (string, error) {
+func GenerateJWT(userID uint) (string, error) {
 	claims := jwt.MapClaims{
 		"userId": userID,
 		"exp":    time.Now().Add(24 * time.Hour).Unix(),
@@ -63,134 +59,14 @@ func VerifyJWT(tokenString string) (jwt.MapClaims, error) {
 }
 
 // Searches for a user by ID and excludes the password from the result
-func FindUserByID(userID string) (*models.User, error) {
-	userCollection := DB.Collection("users")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	objectID, err := primitive.ObjectIDFromHex(userID)
-	if err != nil {
-		return nil, err
-	}
-
+func FindUserByID(userID uint) (*models.User, error) {
 	var user models.User
-	err = userCollection.FindOne(ctx, bson.M{
-		"_id": objectID,
-	}, options.FindOne().SetProjection(bson.M{"password": 0})).Decode(&user)
+	err := DB.Select("id", "name", "username", "email", "profile_picture", "cover_picture", "headline", "about", "location").
+		First(&user, userID).Error
 
 	if err != nil {
 		return nil, err
 	}
 
 	return &user, nil
-}
-
-func PopulatePosts(c *fiber.Ctx, posts []models.Post) ([]models.PostDto, error) {
-	userCollection := DB.Collection("users")
-	postCollection := DB.Collection("posts")
-	var populatedPosts []models.PostDto
-
-	for _, post := range posts {
-		// Populate author
-		var author models.UserDto
-		err := userCollection.FindOne(c.Context(), bson.M{"_id": post.Author}).Decode(&author)
-		if err != nil {
-			continue // O manejar el error según necesites
-		}
-
-		// Populate repost if exists
-		var repostedPost *models.PostDto
-		if post.Repost != nil {
-			var originalPost models.Post
-			err := postCollection.FindOne(c.Context(), bson.M{"_id": *post.Repost}).Decode(&originalPost)
-			if err == nil {
-				// Populate original post author
-				var originalAuthor models.UserDto
-				err := userCollection.FindOne(c.Context(), bson.M{"_id": originalPost.Author}).Decode(&originalAuthor)
-				if err == nil {
-					// Populate original post likes
-					var originalLikedUsers []models.UserDto
-					for _, likeID := range originalPost.Likes {
-						var likeUser models.UserDto
-						err := userCollection.FindOne(c.Context(), bson.M{"_id": likeID}).Decode(&likeUser)
-						if err == nil {
-							originalLikedUsers = append(originalLikedUsers, likeUser)
-						}
-					}
-
-					// Populate original post comments
-					var originalPopulatedComments []models.CommentDto
-					for _, comment := range originalPost.Comments {
-						var commentUser models.UserDto
-						err := userCollection.FindOne(c.Context(), bson.M{"_id": comment.User}).Decode(&commentUser)
-						if err == nil {
-							populatedComment := models.CommentDto{
-								ID:        comment.Id,
-								Content:   comment.Content,
-								User:      commentUser,
-								CreatedAt: comment.CreatedAt,
-							}
-							originalPopulatedComments = append(originalPopulatedComments, populatedComment)
-						}
-					}
-
-					repostedPost = &models.PostDto{
-						ID:        originalPost.Id,
-						Author:    originalAuthor,
-						Content:   originalPost.Content,
-						Image:     originalPost.Image,
-						Likes:     originalLikedUsers,
-						Comments:  originalPopulatedComments,
-						CreatedAt: originalPost.CreatedAt,
-						UpdatedAt: originalPost.UpdatedAt,
-					}
-				}
-			}
-		}
-
-		// Populate comments users
-		var populatedComments []models.CommentDto
-		for _, comment := range post.Comments {
-			var commentUser models.UserDto
-			err := userCollection.FindOne(c.Context(), bson.M{"_id": comment.User}).Decode(&commentUser)
-			if err != nil {
-				continue
-			}
-
-			populatedComment := models.CommentDto{
-				ID:        comment.Id,
-				Content:   comment.Content,
-				User:      commentUser,
-				CreatedAt: comment.CreatedAt,
-			}
-			populatedComments = append(populatedComments, populatedComment)
-		}
-
-		// Populate likes users (si necesitas información de los usuarios que dieron like)
-		var likedUsers []models.UserDto
-		for _, likeID := range post.Likes {
-			var likeUser models.UserDto
-			err := userCollection.FindOne(c.Context(), bson.M{"_id": likeID}).Decode(&likeUser)
-			if err != nil {
-				continue
-			}
-			likedUsers = append(likedUsers, likeUser)
-		}
-
-		populatedPost := models.PostDto{
-			ID:        post.Id,
-			Author:    author,
-			Content:   post.Content,
-			Image:     post.Image,
-			Repost:    repostedPost,
-			Likes:     likedUsers, // o mantener como []primitive.ObjectID si prefieres
-			Comments:  populatedComments,
-			CreatedAt: post.CreatedAt,
-			UpdatedAt: post.UpdatedAt,
-		}
-
-		populatedPosts = append(populatedPosts, populatedPost)
-	}
-
-	return populatedPosts, nil
 }

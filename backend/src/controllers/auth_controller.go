@@ -1,17 +1,14 @@
 package controllers
 
 import (
-	"context"
 	"log"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/theleywin/Backend-Talent-Nest/src/lib"
 	"github.com/theleywin/Backend-Talent-Nest/src/models"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 // Signup handles user registration, validates input, checks for duplicates, hashes password, creates user, and sets JWT cookie
@@ -42,20 +39,14 @@ func Signup(c *fiber.Ctx) error {
 		})
 	}
 
-	userCollection := lib.DB.Collection("users")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
 	var existingUser models.User
-	err := userCollection.FindOne(ctx, bson.M{"email": userData.Email}).Decode(&existingUser)
-	if err == nil {
+	if err := lib.DB.Where("email = ?", userData.Email).First(&existingUser).Error; err == nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "El email ya existe",
 		})
 	}
 
-	err = userCollection.FindOne(ctx, bson.M{"username": userData.Username}).Decode(&existingUser)
-	if err == nil {
+	if err := lib.DB.Where("username = ?", userData.Username).First(&existingUser).Error; err == nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "El username ya existe",
 		})
@@ -69,31 +60,22 @@ func Signup(c *fiber.Ctx) error {
 		})
 	}
 
+	// Create user
 	newUser := models.User{
-		Name:           userData.Name,
-		Username:       userData.Username,
-		Email:          userData.Email,
-		Password:       string(hashedPassword),
-		ProfilePicture: "", // Valor por defecto
-		CoverPicture:   "", // Valor por defecto
-		HeadLine:       "", // Valor por defecto
-		About:          "", // Valor por defecto
-		Location:       "", // Valor por defecto
-		Skills:         []string{},
-		Experience:     []models.Experience{},
-		Education:      []models.Education{},
-		Connections:    []primitive.ObjectID{},
+		Name:     userData.Name,
+		Username: userData.Username,
+		Email:    userData.Email,
+		Password: string(hashedPassword),
 	}
 
-	result, err := userCollection.InsertOne(ctx, newUser)
-	if err != nil {
-		log.Printf("Error al insertar usuario: %v", err)
+	if err := lib.DB.Create(&newUser).Error; err != nil {
+		log.Printf("Error al crear usuario: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Error al crear usuario",
 		})
 	}
 
-	token, err := lib.GenerateJWT(result.InsertedID)
+	token, err := lib.GenerateJWT(newUser.ID)
 	if err != nil {
 		log.Printf("Error al generar token: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -127,15 +109,10 @@ func Login(c *fiber.Ctx) error {
 		})
 	}
 
-	userCollection := lib.DB.Collection("users")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
 	var user models.User
-	err := userCollection.FindOne(ctx, bson.M{"username": loginData.Username}).Decode(&user)
+	err := lib.DB.Where("username = ?", loginData.Username).First(&user).Error
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
-
+		if err == gorm.ErrRecordNotFound {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"message": "Credenciales inválidas",
 			})
@@ -149,13 +126,12 @@ func Login(c *fiber.Ctx) error {
 
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginData.Password))
 	if err != nil {
-
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Credenciales inválidas",
 		})
 	}
 
-	token, err := lib.GenerateJWT(user.Id.Hex())
+	token, err := lib.GenerateJWT(user.ID)
 	if err != nil {
 		log.Printf("Error al generar token: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -196,4 +172,3 @@ func Logout(c *fiber.Ctx) error {
 		"message": "Logged out successfully",
 	})
 }
-

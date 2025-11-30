@@ -1,26 +1,17 @@
 package models
 
 import (
-	"time"
-
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"gorm.io/gorm"
 )
 
 type Notification struct {
-	Id          primitive.ObjectID `json:"_id" bson:"_id,omitempty"`
-	Recipient   primitive.ObjectID `json:"recipient" bson:"recipient"`
-	Type        NotificationType   `json:"type" bson:"type"`
-	RelatedUser primitive.ObjectID `json:"related_user,omitempty" bson:"related_user,omitempty"`
-	RelatedPost primitive.ObjectID `json:"related_post,omitempty" bson:"related_post,omitempty"`
-	Read        bool               `json:"read" bson:"read"`
-	CreatedAt   time.Time          `bson:"createdAt" json:"createdAt"`
-	UpdatedAt   time.Time          `bson:"updatedAt" json:"updatedAt"`
+	gorm.Model
+	RecipientID   uint   `json:"recipient" gorm:"index"`
+	Type          string `json:"type" gorm:"type:varchar(50)"`
+	RelatedUserID *uint  `json:"related_user"`
+	RelatedPostID *uint  `json:"related_post"`
+	Read          bool   `json:"read" gorm:"default:false"`
+	Recipient     User   `json:"-" gorm:"foreignKey:RecipientID"`
+	RelatedUser   *User  `json:"-" gorm:"foreignKey:RelatedUserID"`
+	RelatedPost   *Post  `json:"-" gorm:"foreignKey:RelatedPostID"`
 }
-
-type NotificationType string
-
-const (
-	NotificationTypeLike               NotificationType = "like"
-	NotificationTypeComment            NotificationType = "comment"
-	NotificationTypeConnectionAccepted NotificationType = "connectionAccepted"
-)

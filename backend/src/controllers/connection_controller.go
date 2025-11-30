@@ -2,22 +2,19 @@ package controllers
 
 import (
 	"fmt"
-	"time"
+	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/theleywin/Backend-Talent-Nest/src/lib"
 	"github.com/theleywin/Backend-Talent-Nest/src/models"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"gorm.io/gorm"
 )
 
 // SendConnectionRequest sends a connection request from the authenticated user to another user
 func SendConnectionRequest(c *fiber.Ctx) error {
 	// Obtener ID del usuario destino desde los parámetros
 	targetUserIDStr := c.Params("userId")
-	targetUserID, err := primitive.ObjectIDFromHex(targetUserIDStr)
+	targetUserID, err := strconv.ParseUint(targetUserIDStr, 10, 32)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid user ID format",
@@ -28,36 +25,36 @@ func SendConnectionRequest(c *fiber.Ctx) error {
 	user := c.Locals("user").(models.User)
 
 	// Validar que no se envíe solicitud a uno mismo
-	if user.Id == targetUserID {
+	if user.ID == uint(targetUserID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "You can't send a connection request to yourself",
 		})
 	}
 
 	// Validar que no estén ya conectados
-	for _, conn := range user.Connections {
-		if conn == targetUserID {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"message": "You are already connected with this user",
-			})
-		}
+	var existingConnection models.Connection
+	err = lib.DB.Where("(sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)",
+		user.ID, uint(targetUserID), uint(targetUserID), user.ID).
+		Where("status = ?", models.ConnectionStatusAccepted).
+		First(&existingConnection).Error
+
+	if err == nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "You are already connected with this user",
+		})
 	}
 
 	// Verificar si ya existe una solicitud pendiente
-	connectionCollection := lib.DB.Collection("connections")
-	filter := bson.M{
-		"sender":    user.Id,
-		"recipient": targetUserID,
-		"status":    "pending",
-	}
+	var pendingRequest models.Connection
+	err = lib.DB.Where("sender_id = ? AND recipient_id = ? AND status = ?",
+		user.ID, uint(targetUserID), models.ConnectionStatusPending).
+		First(&pendingRequest).Error
 
-	var existingRequest models.Connection
-	err = connectionCollection.FindOne(c.Context(), filter).Decode(&existingRequest)
 	if err == nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "A connection request already exists",
 		})
-	} else if err != mongo.ErrNoDocuments {
+	} else if err != gorm.ErrRecordNotFound {
 		fmt.Printf("Error checking existing connection request: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Server error",
@@ -66,17 +63,13 @@ func SendConnectionRequest(c *fiber.Ctx) error {
 
 	// Crear nueva solicitud de conexión
 	newRequest := models.Connection{
-		Id:        primitive.NewObjectID(),
-		Sender:    user.Id,
-		Recipient: targetUserID,
-		Status:    "pending",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		SenderID:    user.ID,
+		RecipientID: uint(targetUserID),
+		Status:      models.ConnectionStatusPending,
 	}
 
 	// Guardar en la base de datos
-	_, err = connectionCollection.InsertOne(c.Context(), newRequest)
-	if err != nil {
+	if err := lib.DB.Create(&newRequest).Error; err != nil {
 		fmt.Printf("Error creating connection request: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to send connection request",
@@ -92,7 +85,7 @@ func SendConnectionRequest(c *fiber.Ctx) error {
 func AcceptConnectionRequest(c *fiber.Ctx) error {
 	// Obtener ID de la solicitud desde los parámetros
 	requestIDStr := c.Params("requestId")
-	requestID, err := primitive.ObjectIDFromHex(requestIDStr)
+	requestID, err := strconv.ParseUint(requestIDStr, 10, 32)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request ID format",
@@ -103,11 +96,10 @@ func AcceptConnectionRequest(c *fiber.Ctx) error {
 	user := c.Locals("user").(models.User)
 
 	// Buscar la solicitud de conexión
-	connectionCollection := lib.DB.Collection("connections")
 	var request models.Connection
-	err = connectionCollection.FindOne(c.Context(), bson.M{"_id": requestID}).Decode(&request)
+	err = lib.DB.First(&request, uint(requestID)).Error
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if err == gorm.ErrRecordNotFound {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"message": "Connection request not found",
 			})
@@ -119,81 +111,37 @@ func AcceptConnectionRequest(c *fiber.Ctx) error {
 	}
 
 	// Verificar que el usuario es el destinatario de la solicitud
-	if request.Recipient != user.Id {
+	if request.RecipientID != user.ID {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"message": "Not authorized to accept this request",
 		})
 	}
 
 	// Verificar que la solicitud esté pendiente
-	if request.Status != "pending" {
+	if request.Status != models.ConnectionStatusPending {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "This request has already been processed",
 		})
 	}
 
-	// Ejecutar operaciones sin transacción (para desarrollo)
-	// 1. Actualizar el estado de la solicitud a "accepted"
-	update := bson.M{
-		"$set": bson.M{
-			"status":    "accepted",
-			"updatedAt": time.Now(),
-		},
-	}
-	_, err = connectionCollection.UpdateOne(c.Context(), bson.M{"_id": requestID}, update)
-	if err != nil {
+	// Actualizar el estado de la solicitud a "accepted"
+	request.Status = models.ConnectionStatusAccepted
+	if err := lib.DB.Save(&request).Error; err != nil {
 		fmt.Printf("Error updating connection request: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to accept connection request",
 		})
 	}
 
-	// 2. Agregar conexión al usuario remitente
-	usersCollection := lib.DB.Collection("users")
-	_, err = usersCollection.UpdateOne(
-		c.Context(),
-		bson.M{"_id": request.Sender},
-		bson.M{"$addToSet": bson.M{"connections": user.Id}},
-	)
-	if err != nil {
-		fmt.Printf("Error updating sender connections: %v\n", err)
-		// Intentar revertir el estado de la solicitud
-		connectionCollection.UpdateOne(c.Context(), bson.M{"_id": requestID}, bson.M{"$set": bson.M{"status": "pending"}})
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to update connections",
-		})
-	}
-
-	// 3. Agregar conexión al usuario actual (destinatario)
-	_, err = usersCollection.UpdateOne(
-		c.Context(),
-		bson.M{"_id": user.Id},
-		bson.M{"$addToSet": bson.M{"connections": request.Sender}},
-	)
-	if err != nil {
-		fmt.Printf("Error updating recipient connections: %v\n", err)
-		// Revertir cambios
-		usersCollection.UpdateOne(c.Context(), bson.M{"_id": request.Sender}, bson.M{"$pull": bson.M{"connections": user.Id}})
-		connectionCollection.UpdateOne(c.Context(), bson.M{"_id": requestID}, bson.M{"$set": bson.M{"status": "pending"}})
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to update connections",
-		})
-	}
-
-	// 4. Crear notificación para el usuario remitente
+	// Crear notificación para el usuario remitente
 	notification := models.Notification{
-		Id:          primitive.NewObjectID(),
-		Recipient:   request.Sender,
-		Type:        "connectionAccepted",
-		RelatedUser: user.Id,
-		Read:        false,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		RecipientID:   request.SenderID,
+		Type:          "connectionAccepted",
+		RelatedUserID: &user.ID,
+		Read:          false,
 	}
 
-	notificationsCollection := lib.DB.Collection("notifications")
-	_, err = notificationsCollection.InsertOne(c.Context(), notification)
-	if err != nil {
+	if err := lib.DB.Create(&notification).Error; err != nil {
 		// Log del error pero continuar (la notificación no es crítica)
 		fmt.Printf("Error creating notification: %v\n", err)
 	}
@@ -207,7 +155,7 @@ func AcceptConnectionRequest(c *fiber.Ctx) error {
 func RejectConnectionRequest(c *fiber.Ctx) error {
 	// Obtener ID de la solicitud desde los parámetros
 	requestIDStr := c.Params("requestId")
-	requestID, err := primitive.ObjectIDFromHex(requestIDStr)
+	requestID, err := strconv.ParseUint(requestIDStr, 10, 32)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid request ID format",
@@ -218,11 +166,10 @@ func RejectConnectionRequest(c *fiber.Ctx) error {
 	user := c.Locals("user").(models.User)
 
 	// Buscar la solicitud de conexión
-	connectionCollection := lib.DB.Collection("connections")
 	var request models.Connection
-	err = connectionCollection.FindOne(c.Context(), bson.M{"_id": requestID}).Decode(&request)
+	err = lib.DB.First(&request, uint(requestID)).Error
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if err == gorm.ErrRecordNotFound {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 				"message": "Connection request not found",
 			})
@@ -234,38 +181,25 @@ func RejectConnectionRequest(c *fiber.Ctx) error {
 	}
 
 	// Verificar que el usuario es el destinatario de la solicitud
-	if request.Recipient != user.Id {
+	if request.RecipientID != user.ID {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"message": "Not authorized to reject this request",
 		})
 	}
 
 	// Verificar que la solicitud esté pendiente
-	if request.Status != "pending" {
+	if request.Status != models.ConnectionStatusPending {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "This request has already been processed",
 		})
 	}
 
 	// Actualizar el estado de la solicitud a "rejected"
-	update := bson.M{
-		"$set": bson.M{
-			"status":    "rejected",
-			"updatedAt": time.Now(),
-		},
-	}
-
-	result, err := connectionCollection.UpdateOne(c.Context(), bson.M{"_id": requestID}, update)
-	if err != nil {
+	request.Status = models.ConnectionStatusRejected
+	if err := lib.DB.Save(&request).Error; err != nil {
 		fmt.Printf("Error rejecting connection request: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to reject connection request",
-		})
-	}
-
-	if result.MatchedCount == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"message": "Connection request not found",
 		})
 	}
 
@@ -279,26 +213,15 @@ func GetConnectionRequests(c *fiber.Ctx) error {
 	// Obtener usuario autenticado del middleware
 	user := c.Locals("user").(models.User)
 
-	// Buscar solicitudes pendientes
-	collection := lib.DB.Collection("connections")
-	filter := bson.M{
-		"recipient": user.Id,
-		"status":    "pending",
-	}
-	opts := options.Find().SetSort(bson.M{"createdAt": -1})
+	// Buscar solicitudes pendientes con Preload del Sender
+	var connections []models.Connection
+	err := lib.DB.Preload("Sender").
+		Where("recipient_id = ? AND status = ?", user.ID, models.ConnectionStatusPending).
+		Order("created_at DESC").
+		Find(&connections).Error
 
-	cursor, err := collection.Find(c.Context(), filter, opts)
 	if err != nil {
 		fmt.Printf("Error finding connection requests: %v\n", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Server error",
-		})
-	}
-	defer cursor.Close(c.Context())
-
-	var connections []models.Connection
-	if err := cursor.All(c.Context(), &connections); err != nil {
-		fmt.Printf("Error decoding connections: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Server error",
 		})
@@ -306,44 +229,31 @@ func GetConnectionRequests(c *fiber.Ctx) error {
 
 	// Crear respuesta con datos populares
 	type ConnectionRequestResponse struct {
-		ID        primitive.ObjectID `json:"_id"`
-		Sender    models.User        `json:"sender"`
-		Recipient primitive.ObjectID `json:"recipient"`
-		Status    string             `json:"status"`
-		CreatedAt time.Time          `json:"createdAt"`
-		UpdatedAt time.Time          `json:"updatedAt"`
+		ID        uint           `json:"_id"`
+		Sender    models.UserDto `json:"sender"`
+		Recipient uint           `json:"recipient"`
+		Status    string         `json:"status"`
+		CreatedAt string         `json:"createdAt"`
+		UpdatedAt string         `json:"updatedAt"`
 	}
 
 	var response []ConnectionRequestResponse
 
 	// Popular datos de cada sender
-	usersCollection := lib.DB.Collection("users")
 	for _, conn := range connections {
-		var sender models.User
-		err := usersCollection.FindOne(
-			c.Context(),
-			bson.M{"_id": conn.Sender},
-			options.FindOne().SetProjection(bson.M{
-				"name":            1,
-				"username":        1,
-				"profile_picture": 1,
-				"headline":        1,
-				"connections":     1,
-			}),
-		).Decode(&sender)
-
-		if err != nil && err != mongo.ErrNoDocuments {
-			fmt.Printf("Error finding sender user: %v\n", err)
-			continue
-		}
-
 		response = append(response, ConnectionRequestResponse{
-			ID:        conn.Id,
-			Sender:    sender,
-			Recipient: conn.Recipient,
+			ID: conn.ID,
+			Sender: models.UserDto{
+				ID:             conn.Sender.ID,
+				Name:           conn.Sender.Name,
+				Username:       conn.Sender.Username,
+				ProfilePicture: conn.Sender.ProfilePicture,
+				Headline:       conn.Sender.HeadLine,
+			},
+			Recipient: conn.RecipientID,
 			Status:    string(conn.Status),
-			CreatedAt: conn.CreatedAt,
-			UpdatedAt: conn.UpdatedAt,
+			CreatedAt: conn.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt: conn.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 
@@ -355,69 +265,52 @@ func GetUserConnections(c *fiber.Ctx) error {
 	// Obtener usuario autenticado del middleware
 	user := c.Locals("user").(models.User)
 
-	// Buscar el usuario actual con solo el campo connections
-	usersCollection := lib.DB.Collection("users")
-	var currentUser models.User
-	err := usersCollection.FindOne(
-		c.Context(),
-		bson.M{"_id": user.Id},
-		options.FindOne().SetProjection(bson.M{
-			"connections": 1,
-		}),
-	).Decode(&currentUser)
+	// Buscar todas las conexiones aceptadas donde el usuario es sender o recipient
+	var connections []models.Connection
+	err := lib.DB.Preload("Sender").Preload("Recipient").
+		Where("(sender_id = ? OR recipient_id = ?) AND status = ?",
+			user.ID, user.ID, models.ConnectionStatusAccepted).
+		Find(&connections).Error
 
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusOK).JSON([]interface{}{})
-		}
-		fmt.Printf("Error finding user: %v\n", err)
+		fmt.Printf("Error finding connections: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Server error",
 		})
 	}
 
 	// Si no tiene conexiones, devolver array vacío
-	if len(currentUser.Connections) == 0 {
+	if len(connections) == 0 {
 		return c.Status(fiber.StatusOK).JSON([]interface{}{})
 	}
 
-	// Buscar los usuarios conectados con los campos necesarios
-	filter := bson.M{
-		"_id": bson.M{"$in": currentUser.Connections},
-	}
-	opts := options.Find().SetProjection(bson.M{
-		"name":            1,
-		"username":        1,
-		"profile_picture": 1,
-		"headline":        1,
-		"connections":     1,
-	})
+	// Extraer los usuarios conectados
+	var connectedUsers []models.UserDto
+	for _, conn := range connections {
+		var connectedUser models.User
+		if conn.SenderID == user.ID {
+			connectedUser = conn.Recipient
+		} else {
+			connectedUser = conn.Sender
+		}
 
-	cursor, err := usersCollection.Find(c.Context(), filter, opts)
-	if err != nil {
-		fmt.Printf("Error finding connected users: %v\n", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Server error",
-		})
-	}
-	defer cursor.Close(c.Context())
-
-	var connections []models.User
-	if err := cursor.All(c.Context(), &connections); err != nil {
-		fmt.Printf("Error decoding connections: %v\n", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Server error",
+		connectedUsers = append(connectedUsers, models.UserDto{
+			ID:             connectedUser.ID,
+			Name:           connectedUser.Name,
+			Username:       connectedUser.Username,
+			ProfilePicture: connectedUser.ProfilePicture,
+			Headline:       connectedUser.HeadLine,
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(connections)
+	return c.Status(fiber.StatusOK).JSON(connectedUsers)
 }
 
 // RemoveConnection removes a connection between the authenticated user and another user
 func RemoveConnection(c *fiber.Ctx) error {
 	// Obtener ID del usuario a desconectar desde los parámetros
 	targetUserIDStr := c.Params("userId")
-	targetUserID, err := primitive.ObjectIDFromHex(targetUserIDStr)
+	targetUserID, err := strconv.ParseUint(targetUserIDStr, 10, 32)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid user ID format",
@@ -428,75 +321,36 @@ func RemoveConnection(c *fiber.Ctx) error {
 	user := c.Locals("user").(models.User)
 
 	// Validar que no sea el mismo usuario
-	if user.Id == targetUserID {
+	if user.ID == uint(targetUserID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "You cannot remove yourself as a connection",
 		})
 	}
 
-	// Verificar que exista la conexión antes de eliminarla
-	usersCollection := lib.DB.Collection("users")
-
-	var currentUser models.User
-	err = usersCollection.FindOne(
-		c.Context(),
-		bson.M{"_id": user.Id},
-		options.FindOne().SetProjection(bson.M{"connections": 1}),
-	).Decode(&currentUser)
+	// Buscar la conexión entre los dos usuarios
+	var connection models.Connection
+	err = lib.DB.Where("(sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)",
+		user.ID, uint(targetUserID), uint(targetUserID), user.ID).
+		Where("status = ?", models.ConnectionStatusAccepted).
+		First(&connection).Error
 
 	if err != nil {
-		fmt.Printf("Error finding current user: %v\n", err)
+		if err == gorm.ErrRecordNotFound {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "Connection does not exist",
+			})
+		}
+		fmt.Printf("Error finding connection: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Server error",
 		})
 	}
 
-	// Verificar que exista la conexión
-	connectionExists := false
-	for _, conn := range currentUser.Connections {
-		if conn == targetUserID {
-			connectionExists = true
-			break
-		}
-	}
-
-	if !connectionExists {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"message": "Connection does not exist",
-		})
-	}
-
-	// Eliminar la conexión de ambos usuarios
-	_, err = usersCollection.UpdateOne(
-		c.Context(),
-		bson.M{"_id": user.Id},
-		bson.M{"$pull": bson.M{"connections": targetUserID}},
-	)
-	if err != nil {
-		fmt.Printf("Error removing connection from current user: %v\n", err)
+	// Eliminar la conexión
+	if err := lib.DB.Delete(&connection).Error; err != nil {
+		fmt.Printf("Error removing connection: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"message": "Failed to remove connection",
-		})
-	}
-
-	_, err = usersCollection.UpdateOne(
-		c.Context(),
-		bson.M{"_id": targetUserID},
-		bson.M{"$pull": bson.M{"connections": user.Id}},
-	)
-	if err != nil {
-		// Si falla la segunda actualización, intentar revertir la primera
-		fmt.Printf("Error removing connection from target user: %v\n", err)
-
-		// Revertir la primera operación
-		usersCollection.UpdateOne(
-			c.Context(),
-			bson.M{"_id": user.Id},
-			bson.M{"$addToSet": bson.M{"connections": targetUserID}},
-		)
-
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"message": "Failed to remove connection completely",
 		})
 	}
 
@@ -509,7 +363,7 @@ func RemoveConnection(c *fiber.Ctx) error {
 func GetConnectionStatus(c *fiber.Ctx) error {
 	// Obtener ID del usuario objetivo desde los parámetros
 	targetUserIDStr := c.Params("userId")
-	targetUserID, err := primitive.ObjectIDFromHex(targetUserIDStr)
+	targetUserID, err := strconv.ParseUint(targetUserIDStr, 10, 32)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Invalid user ID format",
@@ -520,47 +374,45 @@ func GetConnectionStatus(c *fiber.Ctx) error {
 	user := c.Locals("user").(models.User)
 
 	// Validar que no sea el mismo usuario
-	if user.Id == targetUserID {
+	if user.ID == uint(targetUserID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"message": "Cannot check connection status with yourself",
 		})
 	}
 
 	// Verificar si ya están conectados
-	for _, conn := range user.Connections {
-		if conn == targetUserID {
-			return c.Status(fiber.StatusOK).JSON(fiber.Map{
-				"status": "connected",
-			})
-		}
+	var connectedConnection models.Connection
+	err = lib.DB.Where("(sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)",
+		user.ID, uint(targetUserID), uint(targetUserID), user.ID).
+		Where("status = ?", models.ConnectionStatusAccepted).
+		First(&connectedConnection).Error
+
+	if err == nil {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"status": "connected",
+		})
 	}
 
 	// Verificar si existe una solicitud pendiente
-	connectionCollection := lib.DB.Collection("connections")
-	filter := bson.M{
-		"$or": []bson.M{
-			{"sender": user.Id, "recipient": targetUserID},
-			{"sender": targetUserID, "recipient": user.Id},
-		},
-		"status": "pending",
-	}
-
 	var pendingRequest models.Connection
-	err = connectionCollection.FindOne(c.Context(), filter).Decode(&pendingRequest)
+	err = lib.DB.Where("(sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)",
+		user.ID, uint(targetUserID), uint(targetUserID), user.ID).
+		Where("status = ?", models.ConnectionStatusPending).
+		First(&pendingRequest).Error
 
 	if err == nil {
 		// Existe una solicitud pendiente
-		if pendingRequest.Sender == user.Id {
+		if pendingRequest.SenderID == user.ID {
 			return c.Status(fiber.StatusOK).JSON(fiber.Map{
 				"status": "pending",
 			})
 		} else {
 			return c.Status(fiber.StatusOK).JSON(fiber.Map{
 				"status":    "received",
-				"requestId": pendingRequest.Id,
+				"requestId": pendingRequest.ID,
 			})
 		}
-	} else if err != mongo.ErrNoDocuments {
+	} else if err != gorm.ErrRecordNotFound {
 		// Error en la consulta
 		fmt.Printf("Error checking pending connection request: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

@@ -3,43 +3,51 @@ package models
 import (
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"gorm.io/gorm"
 )
 
 type Post struct {
-	Id        primitive.ObjectID   `json:"_id" bson:"_id,omitempty"`
-	Author    primitive.ObjectID   `json:"author" bson:"author"`
-	Content   string               `json:"content" bson:"content"`
-	Image     string               `json:"image" bson:"image"`
-	Repost    *primitive.ObjectID  `json:"repost,omitempty" bson:"repost,omitempty"`
-	Likes     []primitive.ObjectID `json:"likes" bson:"likes"`
-	Comments  []Comment            `json:"comments" bson:"comments"`
-	CreatedAt time.Time            `bson:"createdAt" json:"createdAt"`
-	UpdatedAt time.Time            `bson:"updatedAt" json:"updatedAt"`
+	gorm.Model
+	AuthorID uint      `json:"author" gorm:"index"`
+	Content  string    `json:"content" gorm:"type:text"`
+	Image    string    `json:"image"`
+	RepostID *uint     `json:"repost"`
+	Likes    []Like    `json:"likes" gorm:"foreignKey:PostID"`
+	Comments []Comment `json:"comments" gorm:"foreignKey:PostID"`
+	Author   User      `json:"-" gorm:"foreignKey:AuthorID"`
+	Repost   *Post     `json:"-" gorm:"foreignKey:RepostID"`
 }
 
 type PostDto struct {
-	ID        primitive.ObjectID `json:"_id"`
-	Author    UserDto            `json:"author"`
-	Content   string             `json:"content,omitempty"`
-	Image     string             `json:"image,omitempty"`
-	Repost    *PostDto           `json:"repost,omitempty"`
-	Likes     []UserDto          `json:"likes,omitempty"`
-	Comments  []CommentDto       `json:"comments,omitempty"`
-	CreatedAt time.Time          `json:"createdAt"`
-	UpdatedAt time.Time          `json:"updatedAt"`
+	ID        uint         `json:"_id"`
+	Author    UserDto      `json:"author"`
+	Content   string       `json:"content"`
+	Image     string       `json:"image"`
+	Repost    *PostDto     `json:"repost,omitempty"`
+	Likes     []UserDto    `json:"likes"`
+	Comments  []CommentDto `json:"comments"`
+	CreatedAt time.Time    `json:"createdAt"`
+	UpdatedAt time.Time    `json:"updatedAt"`
 }
 
 type Comment struct {
-	Id        primitive.ObjectID `json:"_id" bson:"_id,omitempty"`
-	Content   string             `json:"content" bson:"content"`
-	User      primitive.ObjectID `json:"user" bson:"user"`
-	CreatedAt time.Time          `json:"created_at" bson:"created_at"`
+	gorm.Model
+	PostID  uint   `json:"post_id" gorm:"index"`
+	UserID  uint   `json:"user_id" gorm:"index"`
+	Content string `json:"content" gorm:"type:text"`
+	User    User   `json:"-" gorm:"foreignKey:UserID"`
 }
 
 type CommentDto struct {
-	ID        primitive.ObjectID `json:"_id"`
-	Content   string             `json:"content"`
-	User      UserDto            `json:"user"`
-	CreatedAt time.Time          `json:"createdAt"`
+	ID        uint      `json:"_id"`
+	Content   string    `json:"content"`
+	User      UserDto   `json:"user"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type Like struct {
+	gorm.Model
+	PostID uint `json:"post_id" gorm:"index"`
+	UserID uint `json:"user_id" gorm:"index"`
+	User   User `json:"-" gorm:"foreignKey:UserID"`
 }

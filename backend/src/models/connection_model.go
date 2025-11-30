@@ -1,18 +1,16 @@
 package models
 
 import (
-	"time"
-
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"gorm.io/gorm"
 )
 
 type Connection struct {
-	Id        primitive.ObjectID `json:"_id" bson:"_id,omitempty"`
-	Sender    primitive.ObjectID `json:"sender" bson:"sender"`
-	Recipient primitive.ObjectID `json:"recipient" bson:"recipient"`
-	Status    ConnectionStatus   `json:"status" bson:"status"` // pending, accepted, rejected
-	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
-	UpdatedAt time.Time          `bson:"updatedAt" json:"updatedAt"`
+	gorm.Model
+	SenderID    uint             `json:"sender" gorm:"index"`
+	RecipientID uint             `json:"recipient" gorm:"index"`
+	Status      ConnectionStatus `json:"status" gorm:"type:varchar(20);default:'pending'"`
+	Sender      User             `json:"-" gorm:"foreignKey:SenderID"`
+	Recipient   User             `json:"-" gorm:"foreignKey:RecipientID"`
 }
 
 type ConnectionStatus string
