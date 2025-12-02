@@ -85,7 +85,7 @@ docker run --rm \
   --name backend \
   --network talentnet \
   --network-alias backend-service \
-  -p 3000:3000 \
+  -p :3000 \
   --env JWT_SECRET=secret_key \
   --env PORT=3000 \
   backend-tn:latest
@@ -99,7 +99,7 @@ docker run --rm \
   --name frontend \
   --network talentnet \
   --network-alias frontend-service \
-  -p 5173:5173 \
+  -p :5173 \
   frontend-tn:latest
 ```
 
