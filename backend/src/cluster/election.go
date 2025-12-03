@@ -33,10 +33,24 @@ func (cs *ClusterState) ElectLeader() {
 		// Actualizar el rol del nodo actual
 		if cs.CurrentNodeID == newLeaderID {
 			cs.CurrentRole = Leader
+			cs.IsReady = true // El líder siempre está listo
 			log.Printf("This node (ID=%d) is now the LEADER", cs.CurrentNodeID)
 		} else {
+			oldRole := cs.CurrentRole
 			cs.CurrentRole = Follower
 			log.Printf("This node (ID=%d) is now a FOLLOWER. Leader is ID=%d", cs.CurrentNodeID, newLeaderID)
+
+			// Si este nodo era líder y ahora es seguidor, necesita resincronizarse
+			if oldRole == Leader {
+				cs.IsReady = false
+				log.Println("Former leader demoted to follower, will request sync")
+				go func() {
+					time.Sleep(2 * time.Second) // Esperar un poco para que el nuevo líder se estabilice
+					if err := cs.RequestFullSync(); err != nil {
+						log.Printf("Error syncing after demotion: %v", err)
+					}
+				}()
+			}
 		}
 
 		// Actualizar roles en el mapa de nodos
