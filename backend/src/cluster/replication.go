@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // ReplicateToFollowers envía un mensaje de replicación a todos los seguidores
@@ -91,10 +93,68 @@ func (cs *ClusterState) ApplyReplication(message ReplicationMessage, db interfac
 
 	log.Printf("Applying replication: %s on table %s (RecordID: %d)", message.Operation, message.Table, message.RecordID)
 
-	// Aquí se aplicará la operación en la base de datos
-	// La implementación específica dependerá de cómo se maneje la BD
-	// Por ahora, solo registramos la operación
+	// Convertir db interface a *gorm.DB
+	gormDB, ok := db.(*gorm.DB)
+	if !ok {
+		return fmt.Errorf("invalid database instance")
+	}
 
+	// Aplicar la operación según el tipo
+	switch message.Operation {
+	case "INSERT":
+		return cs.applyInsert(message.Table, message.Data, gormDB)
+	case "UPDATE":
+		return cs.applyUpdate(message.Table, message.RecordID, message.Data, gormDB)
+	case "DELETE":
+		return cs.applyDelete(message.Table, message.RecordID, gormDB)
+	default:
+		return fmt.Errorf("unknown operation: %s", message.Operation)
+	}
+}
+
+// applyInsert aplica una operación INSERT replicada
+func (cs *ClusterState) applyInsert(table string, data map[string]interface{}, db *gorm.DB) error {
+	log.Printf("Inserting into %s: %v", table, data)
+
+	// Ejecutar INSERT raw SQL con los datos
+	// Convertir map a JSON para insertar
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("error marshaling data: %v", err)
+	}
+
+	// Por ahora, registrar que se recibiría la operación
+	// En una implementación completa, necesitarías crear el registro en la tabla correspondiente
+	log.Printf("Would insert into %s: %s", table, string(jsonData))
+
+	return nil
+}
+
+// applyUpdate aplica una operación UPDATE replicada
+func (cs *ClusterState) applyUpdate(table string, recordID uint, data map[string]interface{}, db *gorm.DB) error {
+	log.Printf("Updating %s record %d: %v", table, recordID, data)
+
+	// Ejecutar UPDATE en la tabla correspondiente
+	result := db.Table(table).Where("id = ?", recordID).Updates(data)
+	if result.Error != nil {
+		return fmt.Errorf("error updating record: %v", result.Error)
+	}
+
+	log.Printf("Updated %d rows in %s", result.RowsAffected, table)
+	return nil
+}
+
+// applyDelete aplica una operación DELETE replicada
+func (cs *ClusterState) applyDelete(table string, recordID uint, db *gorm.DB) error {
+	log.Printf("Deleting from %s record %d", table, recordID)
+
+	// Ejecutar soft delete (deleted_at)
+	result := db.Table(table).Where("id = ?", recordID).Update("deleted_at", time.Now())
+	if result.Error != nil {
+		return fmt.Errorf("error deleting record: %v", result.Error)
+	}
+
+	log.Printf("Deleted record %d from %s", recordID, table)
 	return nil
 }
 

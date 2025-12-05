@@ -64,7 +64,10 @@ func main() {
 	// Aplicar middleware de readiness check
 	app.Use(cluster.ReadinessCheck(ClusterState))
 
-	// Aplicar middleware de replicación
+	// Aplicar middleware de auto-replicación (DEBE IR ANTES de ReplicationMiddleware)
+	app.Use(cluster.AutoReplicationMiddleware(ClusterState))
+
+	// Aplicar middleware de redirección al líder
 	app.Use(cluster.ReplicationMiddleware(ClusterState))
 
 	// Register routes

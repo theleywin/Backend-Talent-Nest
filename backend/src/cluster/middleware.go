@@ -2,10 +2,72 @@ package cluster
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
+	"log"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
+
+// AutoReplicationMiddleware captura operaciones exitosas del líder y las replica automáticamente
+func AutoReplicationMiddleware(clusterState *ClusterState) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		method := c.Method()
+		path := c.Path()
+
+		// Solo aplica para escrituras en el líder
+		if !clusterState.IsLeader() || !isWriteOperation(method) || isClusterEndpoint(path) {
+			return c.Next()
+		}
+
+		// Capturar body original
+		var bodyData map[string]interface{}
+		if len(c.Body()) > 0 {
+			bodyBytes := make([]byte, len(c.Body()))
+			copy(bodyBytes, c.Body())
+			json.Unmarshal(bodyBytes, &bodyData)
+		}
+
+		// Ejecutar el handler
+		err := c.Next()
+
+		// Si fue exitoso (2xx), replicar
+		statusCode := c.Response().StatusCode()
+		if err == nil && statusCode >= 200 && statusCode < 300 {
+			go func() {
+				// Extraer ID del registro de la respuesta
+				var recordID uint
+				var responseBody map[string]interface{}
+
+				if json.Unmarshal(c.Response().Body(), &responseBody) == nil {
+					if id, ok := responseBody["_id"].(float64); ok {
+						recordID = uint(id)
+					} else if user, ok := responseBody["user"].(map[string]interface{}); ok {
+						if id, ok := user["_id"].(float64); ok {
+							recordID = uint(id)
+						}
+					}
+				}
+
+				// Determinar tabla y operación
+				table := getTableFromPath(path)
+				operation := "INSERT"
+				if method == "PUT" || method == "PATCH" {
+					operation = "UPDATE"
+				} else if method == "DELETE" {
+					operation = "DELETE"
+				}
+
+				// Replicar a seguidores
+				clusterState.ReplicateToFollowers(operation, table, bodyData, recordID)
+				log.Printf("✓ Replicated %s on %s (ID:%d) to followers", operation, table, recordID)
+			}()
+		}
+
+		return err
+	}
+}
 
 // ReplicationMiddleware intercepta peticiones de escritura y las redirige al líder si es necesario
 func ReplicationMiddleware(clusterState *ClusterState) fiber.Handler {
@@ -37,6 +99,35 @@ func ReplicationMiddleware(clusterState *ClusterState) fiber.Handler {
 		// Por defecto, continuar
 		return c.Next()
 	}
+}
+
+// getTableFromPath determina la tabla de BD basándose en el path de la API
+func getTableFromPath(path string) string {
+	pathLower := strings.ToLower(path)
+
+	if strings.Contains(pathLower, "/auth/signup") || strings.Contains(pathLower, "/auth/login") {
+		return "users"
+	}
+	if strings.Contains(pathLower, "/users") {
+		return "users"
+	}
+	if strings.Contains(pathLower, "/posts") {
+		return "posts"
+	}
+	if strings.Contains(pathLower, "/comments") {
+		return "comments"
+	}
+	if strings.Contains(pathLower, "/notifications") {
+		return "notifications"
+	}
+	if strings.Contains(pathLower, "/connections") {
+		return "connections"
+	}
+	if strings.Contains(pathLower, "/likes") {
+		return "likes"
+	}
+
+	return "unknown"
 }
 
 // isClusterEndpoint verifica si el path es un endpoint del cluster
