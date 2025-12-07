@@ -1,16 +1,20 @@
 package cluster
 
 import (
+	"fmt"
 	"log"
+	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
-// ElectLeader selecciona el líder basándose en el ID más alto
+// ElectLeader selecciona el líder basándose en el ID más bajo
 func (cs *ClusterState) ElectLeader() {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
-	// Obtener todos los nodos saludables ordenados por ID (descendente)
+	// Obtener todos los nodos saludables ordenados por ID (aescendente)
 	nodes := cs.getAllNodesUnsafe()
 
 	if len(nodes) == 0 {
@@ -18,7 +22,7 @@ func (cs *ClusterState) ElectLeader() {
 		return
 	}
 
-	// El nodo con el ID más alto es el líder
+	// El nodo con el ID más bajo es el líder
 	newLeaderID := nodes[0].ID
 	newLeaderAddress := nodes[0].Address
 
@@ -73,10 +77,10 @@ func (cs *ClusterState) getAllNodesUnsafe() []*Node {
 		}
 	}
 
-	// Ordenar por ID (mayor a menor)
+	// Ordenar por ID (menor a mayor)
 	for i := 0; i < len(nodes)-1; i++ {
 		for j := i + 1; j < len(nodes); j++ {
-			if nodes[i].ID < nodes[j].ID {
+			if nodes[i].ID > nodes[j].ID {
 				nodes[i], nodes[j] = nodes[j], nodes[i]
 			}
 		}
@@ -86,7 +90,7 @@ func (cs *ClusterState) getAllNodesUnsafe() []*Node {
 }
 
 // StartLeaderElection inicia el proceso de elección de líder cada 10 segundos
-func (cs *ClusterState) StartLeaderElection() {
+func (cs *ClusterState) StartLeaderElection(db *gorm.DB) {
 	ticker := time.NewTicker(10 * time.Second)
 	go func() {
 		for range ticker.C {
@@ -103,6 +107,9 @@ func (cs *ClusterState) StartLeaderElection() {
 
 			// Mostrar estado del cluster
 			cs.PrintClusterState()
+
+			// Mostrar estado de la base de datos
+			cs.PrintDatabaseState(db)
 		}
 	}()
 
@@ -126,4 +133,64 @@ func (cs *ClusterState) PrintClusterState() {
 			node.ID, node.Role, node.Address, node.IsHealthy)
 	}
 	log.Println("===================================")
+}
+
+// PrintDatabaseState imprime el contenido de todas las tablas de la base de datos
+func (cs *ClusterState) PrintDatabaseState(db *gorm.DB) {
+	log.Println("\n========== Database State ==========")
+	log.Printf("Node ID: %d | Role: %s", cs.CurrentNodeID, cs.CurrentRole)
+	
+	tables := []string{"users", "posts", "connections", "notifications"}
+	
+	for _, table := range tables {
+		var count int64
+		
+		// Contar registros
+		if err := db.Table(table).Count(&count).Error; err != nil {
+			log.Printf("[%s] Error counting: %v", table, err)
+			continue
+		}
+		
+		log.Printf("\n[Table: %s] Total records: %d", table, count)
+		
+		if count == 0 {
+			log.Printf("  (empty)")
+			continue
+		}
+		
+		// Obtener todos los registros como mapas
+		var records []map[string]interface{}
+		if err := db.Table(table).Find(&records).Error; err != nil {
+			log.Printf("  Error fetching records: %v", err)
+			continue
+		}
+		
+		// Imprimir cada registro
+		log.Printf("  Records:")
+		for i, record := range records {
+			// Construir string con todos los campos dinámicamente
+			var fields []string
+			for key, value := range record {
+				// Formatear el valor según su tipo
+				var formattedValue string
+				switch v := value.(type) {
+				case string:
+					// Limitar strings largos a 50 caracteres
+					if len(v) > 50 {
+						formattedValue = v[:47] + "..."
+					} else {
+						formattedValue = v
+					}
+				case nil:
+					formattedValue = "<nil>"
+				default:
+					formattedValue = fmt.Sprintf("%v", v)
+				}
+				fields = append(fields, fmt.Sprintf("%s=%s", key, formattedValue))
+			}
+			log.Printf("    [%d] %s", i+1, strings.Join(fields, " | "))
+		}
+	}
+	
+	log.Println("\n=====================================")
 }

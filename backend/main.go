@@ -39,13 +39,21 @@ func main() {
 	// Elección inicial de líder
 	ClusterState.ElectLeader()
 
-	// Iniciar proceso de elección de líder cada 10 segundos
-	ClusterState.StartLeaderElection()
-
 	// Connect to SQLite database
 	lib.ConnectDB()
 
+	// Iniciar proceso de elección de líder cada 10 segundos (con acceso a la DB)
+	ClusterState.StartLeaderElection(lib.DB)
+
 	lib.AutoMigrate()
+
+	// Registrar el hook de replicación en GORM
+	replicationHook := &cluster.ReplicationHook{
+		ClusterState: ClusterState,
+	}
+	if err := lib.DB.Use(replicationHook); err != nil {
+		fmt.Printf("Error: Failed to register replication hook: %v\n", err)
+	}
 
 	// Si el nodo es seguidor, solicitar sincronización completa del líder
 	if !ClusterState.IsLeader() && ClusterState.GetLeaderAddress() != "" {
@@ -63,9 +71,6 @@ func main() {
 
 	// Aplicar middleware de readiness check
 	app.Use(cluster.ReadinessCheck(ClusterState))
-
-	// Aplicar middleware de auto-replicación (DEBE IR ANTES de ReplicationMiddleware)
-	app.Use(cluster.AutoReplicationMiddleware(ClusterState))
 
 	// Aplicar middleware de redirección al líder
 	app.Use(cluster.ReplicationMiddleware(ClusterState))

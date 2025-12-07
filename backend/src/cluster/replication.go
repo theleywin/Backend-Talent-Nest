@@ -114,19 +114,18 @@ func (cs *ClusterState) ApplyReplication(message ReplicationMessage, db interfac
 
 // applyInsert aplica una operación INSERT replicada
 func (cs *ClusterState) applyInsert(table string, data map[string]interface{}, db *gorm.DB) error {
-	log.Printf("Inserting into %s: %v", table, data)
+	log.Printf("[Replication] Inserting into %s: %v", table, data)
 
-	// Ejecutar INSERT raw SQL con los datos
-	// Convertir map a JSON para insertar
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("error marshaling data: %v", err)
+	// Los datos ya vienen completos del hook de GORM con todos los campos correctos
+	// Solo necesitamos asegurarnos de que los timestamps estén en el formato correcto
+
+	// Ejecutar INSERT usando GORM
+	result := db.Table(table).Create(data)
+	if result.Error != nil {
+		log.Printf("[Replication] ❌ Error inserting into %s: %v", table, result.Error)
+		return fmt.Errorf("error inserting into %s: %v", table, result.Error)
 	}
-
-	// Por ahora, registrar que se recibiría la operación
-	// En una implementación completa, necesitarías crear el registro en la tabla correspondiente
-	log.Printf("Would insert into %s: %s", table, string(jsonData))
-
+	log.Printf("[Replication] ✓ Successfully inserted into %s (rows affected: %d)", table, result.RowsAffected)
 	return nil
 }
 

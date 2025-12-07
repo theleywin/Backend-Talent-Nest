@@ -58,7 +58,7 @@ func GetUserNotifications(c *fiber.Ctx) error {
 		}
 
 		// Popular usuario relacionado si existe
-		if notification.RelatedUserID != nil && notification.RelatedUser != nil {
+		if notification.RelatedUserID != 0 && notification.RelatedUser != nil {
 			respItem.RelatedUser = map[string]interface{}{
 				"_id":            notification.RelatedUser.ID,
 				"name":           notification.RelatedUser.Name,
@@ -68,7 +68,7 @@ func GetUserNotifications(c *fiber.Ctx) error {
 		}
 
 		// Popular post relacionado si existe
-		if notification.RelatedPostID != nil && notification.RelatedPost != nil {
+		if notification.RelatedPostID != 0 && notification.RelatedPost != nil {
 			respItem.RelatedPost = map[string]interface{}{
 				"_id":     notification.RelatedPost.ID,
 				"content": notification.RelatedPost.Content,

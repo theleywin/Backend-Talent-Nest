@@ -105,7 +105,7 @@ func CreatePost(c *fiber.Ctx) error {
 	}
 
 	// Procesar el campo Repost si existe
-	var repostID *uint
+	var repostID uint
 	if req.Repost != nil && *req.Repost > 0 {
 		// Verificar que el post a repostear existe
 		var existingPost models.Post
@@ -121,7 +121,7 @@ func CreatePost(c *fiber.Ctx) error {
 			})
 		}
 
-		repostID = req.Repost
+		repostID = *req.Repost
 	}
 
 	// Crear nuevo post
@@ -301,8 +301,8 @@ func CreateComment(c *fiber.Ctx) error {
 		newNotification := models.Notification{
 			RecipientID:   post.AuthorID,
 			Type:          "comment",
-			RelatedUserID: &user.ID,
-			RelatedPostID: &postIDUint,
+			RelatedUserID: user.ID,
+			RelatedPostID: postIDUint,
 			Read:          false,
 		}
 
@@ -394,8 +394,8 @@ func LikePost(c *fiber.Ctx) error {
 		newNotification := models.Notification{
 			RecipientID:   post.AuthorID,
 			Type:          "like",
-			RelatedUserID: &user.ID,
-			RelatedPostID: &postIDUint,
+			RelatedUserID: user.ID,
+			RelatedPostID: postIDUint,
 			Read:          false,
 		}
 
@@ -465,7 +465,7 @@ func convertToPostDto(post models.Post) models.PostDto {
 	}
 
 	// Convert Repost if exists
-	if post.RepostID != nil && post.Repost != nil {
+	if post.RepostID != 0 && post.Repost != nil {
 		repostDto := models.PostDto{
 			ID: post.Repost.ID,
 			Author: models.UserDto{

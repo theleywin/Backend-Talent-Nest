@@ -11,7 +11,7 @@ type Post struct {
 	AuthorID uint      `json:"author" gorm:"index"`
 	Content  string    `json:"content" gorm:"type:text"`
 	Image    string    `json:"image"`
-	RepostID *uint     `json:"repost"`
+	RepostID uint     `json:"repost" gorm:"default:null"`
 	Likes    []Like    `json:"likes" gorm:"foreignKey:PostID"`
 	Comments []Comment `json:"comments" gorm:"foreignKey:PostID"`
 	Author   User      `json:"-" gorm:"foreignKey:AuthorID"`
