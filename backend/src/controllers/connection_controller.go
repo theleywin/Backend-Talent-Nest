@@ -137,7 +137,7 @@ func AcceptConnectionRequest(c *fiber.Ctx) error {
 	notification := models.Notification{
 		RecipientID:   request.SenderID,
 		Type:          "connectionAccepted",
-		RelatedUserID: &user.ID,
+		RelatedUserID: user.ID,
 		Read:          false,
 	}
 
