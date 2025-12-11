@@ -40,21 +40,18 @@ func (cs *ClusterState) ElectLeader() {
 			cs.IsReady = true // El líder siempre está listo
 			log.Printf("This node (ID=%d) is now the LEADER", cs.CurrentNodeID)
 		} else {
-			oldRole := cs.CurrentRole
 			cs.CurrentRole = Follower
 			log.Printf("This node (ID=%d) is now a FOLLOWER. Leader is ID=%d", cs.CurrentNodeID, newLeaderID)
 
-			// Si este nodo era líder y ahora es seguidor, necesita resincronizarse
-			if oldRole == Leader {
-				cs.IsReady = false
-				log.Println("Former leader demoted to follower, will request sync")
-				go func() {
-					time.Sleep(2 * time.Second) // Esperar un poco para que el nuevo líder se estabilice
-					if err := cs.RequestFullSync(); err != nil {
-						log.Printf("Error syncing after demotion: %v", err)
-					}
-				}()
-			}
+			// Si hay cambio de líder, este nodo necesita resincronizarse con el nuevo líder
+			cs.IsReady = false
+			log.Println("Leader changed, will request sync from new leader")
+			go func() {
+				time.Sleep(2 * time.Second) // Esperar un poco para que el nuevo líder se estabilice
+				if err := cs.RequestFullSync(); err != nil {
+					log.Printf("Error syncing with new leader: %v", err)
+				}
+			}()
 		}
 
 		// Actualizar roles en el mapa de nodos
@@ -139,32 +136,32 @@ func (cs *ClusterState) PrintClusterState() {
 func (cs *ClusterState) PrintDatabaseState(db *gorm.DB) {
 	log.Println("\n========== Database State ==========")
 	log.Printf("Node ID: %d | Role: %s", cs.CurrentNodeID, cs.CurrentRole)
-	
+
 	tables := []string{"users", "posts", "connections", "notifications"}
-	
+
 	for _, table := range tables {
 		var count int64
-		
+
 		// Contar registros
 		if err := db.Table(table).Count(&count).Error; err != nil {
 			log.Printf("[%s] Error counting: %v", table, err)
 			continue
 		}
-		
+
 		log.Printf("\n[Table: %s] Total records: %d", table, count)
-		
+
 		if count == 0 {
 			log.Printf("  (empty)")
 			continue
 		}
-		
+
 		// Obtener todos los registros como mapas
 		var records []map[string]interface{}
 		if err := db.Table(table).Find(&records).Error; err != nil {
 			log.Printf("  Error fetching records: %v", err)
 			continue
 		}
-		
+
 		// Imprimir cada registro
 		log.Printf("  Records:")
 		for i, record := range records {
@@ -191,6 +188,6 @@ func (cs *ClusterState) PrintDatabaseState(db *gorm.DB) {
 			log.Printf("    [%d] %s", i+1, strings.Join(fields, " | "))
 		}
 	}
-	
+
 	log.Println("\n=====================================")
 }
