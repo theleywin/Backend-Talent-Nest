@@ -2,84 +2,10 @@ package cluster
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
-	"log"
-	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
-
-// AutoReplicationMiddleware captura operaciones exitosas del líder y las replica automáticamente
-func AutoReplicationMiddleware(clusterState *ClusterState) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		method := c.Method()
-		path := c.Path()
-
-		// Solo aplica para escrituras en el líder
-		if !clusterState.IsLeader() || !isWriteOperation(method) || isClusterEndpoint(path) || isReadOnlyOperation(path) {
-			return c.Next()
-		}
-
-		log.Printf("[AutoReplication] Intercepting %s %s on leader", method, path) // Capturar body original
-		var bodyData map[string]interface{}
-		if len(c.Body()) > 0 {
-			bodyBytes := make([]byte, len(c.Body()))
-			copy(bodyBytes, c.Body())
-			json.Unmarshal(bodyBytes, &bodyData)
-		}
-
-		// Ejecutar el handler
-		err := c.Next()
-
-		// Si fue exitoso (2xx), replicar
-		statusCode := c.Response().StatusCode()
-		log.Printf("[AutoReplication] Response status: %d", statusCode)
-
-		if err == nil && statusCode >= 200 && statusCode < 300 {
-			// Capturar respuesta ANTES del goroutine (el contexto expira después)
-			responseBodyBytes := make([]byte, len(c.Response().Body()))
-			copy(responseBodyBytes, c.Response().Body())
-
-			log.Printf("[AutoReplication] Response body: %s", string(responseBodyBytes))
-
-			// Extraer ID del registro de la respuesta
-			var recordID uint
-			var responseBody map[string]interface{}
-
-			if json.Unmarshal(responseBodyBytes, &responseBody) == nil {
-				if id, ok := responseBody["_id"].(float64); ok {
-					recordID = uint(id)
-				} else if user, ok := responseBody["user"].(map[string]interface{}); ok {
-					if id, ok := user["_id"].(float64); ok {
-						recordID = uint(id)
-					}
-				}
-			}
-
-			// Determinar tabla y operación
-			table := getTableFromPath(path)
-			operation := "INSERT"
-			if method == "PUT" || method == "PATCH" {
-				operation = "UPDATE"
-			} else if method == "DELETE" {
-				operation = "DELETE"
-			}
-			
-			log.Printf("[AutoReplication] Extracted - Table: %s, Operation: %s, RecordID: %d", table, operation, recordID)
-
-			// Replicar a seguidores en goroutine
-			go func() {
-				log.Printf("[AutoReplication] Starting replication to followers...")
-				log.Printf("[AutoReplication] 📦 Data being sent: %+v", bodyData)
-				clusterState.ReplicateToFollowers(operation, table, bodyData, recordID)
-				log.Printf("✓ Replicated %s on %s (ID:%d) to followers", operation, table, recordID)
-			}()
-		}
-
-		return err
-	}
-}
 
 // ReplicationMiddleware intercepta peticiones de escritura y las redirige al líder si es necesario
 func ReplicationMiddleware(clusterState *ClusterState) fiber.Handler {
@@ -118,35 +44,6 @@ func ReplicationMiddleware(clusterState *ClusterState) fiber.Handler {
 	}
 }
 
-// getTableFromPath determina la tabla de BD basándose en el path de la API
-func getTableFromPath(path string) string {
-	pathLower := strings.ToLower(path)
-
-	if strings.Contains(pathLower, "/auth/signup") || strings.Contains(pathLower, "/auth/login") {
-		return "users"
-	}
-	if strings.Contains(pathLower, "/users") {
-		return "users"
-	}
-	if strings.Contains(pathLower, "/posts") {
-		return "posts"
-	}
-	if strings.Contains(pathLower, "/comments") {
-		return "comments"
-	}
-	if strings.Contains(pathLower, "/notifications") {
-		return "notifications"
-	}
-	if strings.Contains(pathLower, "/connections") {
-		return "connections"
-	}
-	if strings.Contains(pathLower, "/likes") {
-		return "likes"
-	}
-
-	return "unknown"
-}
-
 // isClusterEndpoint verifica si el path es un endpoint del cluster
 func isClusterEndpoint(path string) bool {
 	clusterPaths := []string{
@@ -177,10 +74,10 @@ func isWriteOperation(method string) bool {
 // isReadOnlyOperation identifica operaciones POST que no modifican la base de datos
 func isReadOnlyOperation(path string) bool {
 	readOnlyPaths := []string{
-		"/api/v1/auth/login",   // Autenticación, no crea/modifica datos
-		"/api/v1/auth/logout",  // Solo limpia sesión, no modifica DB
+		"/api/v1/auth/login",  // Autenticación, no crea/modifica datos
+		"/api/v1/auth/logout", // Solo limpia sesión, no modifica DB
 	}
-	
+
 	for _, rop := range readOnlyPaths {
 		if path == rop {
 			return true
