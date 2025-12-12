@@ -219,6 +219,59 @@ func (cs *ClusterState) RequestFullSync() error {
 	return nil
 }
 
+// syncFromNode sincroniza la base de datos desde un nodo específico (sin usar locks)
+// Esta función debe ser llamada sin tener el mutex bloqueado
+func (cs *ClusterState) syncFromNode(nodeAddress string) error {
+	log.Printf("Requesting sync from node at %s", nodeAddress)
+
+	url := fmt.Sprintf("%s/cluster/sync", nodeAddress)
+
+	request := SyncRequest{
+		NodeID:    cs.CurrentNodeID,
+		Timestamp: time.Now(),
+	}
+
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("error marshaling sync request: %v", err)
+	}
+
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("error requesting sync: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("sync request failed with status: %d", resp.StatusCode)
+	}
+
+	var syncResponse SyncResponse
+	if err := json.NewDecoder(resp.Body).Decode(&syncResponse); err != nil {
+		return fmt.Errorf("error decoding sync response: %v", err)
+	}
+
+	// Decodificar la base de datos de base64
+	dbData, err := base64.StdEncoding.DecodeString(syncResponse.Database)
+	if err != nil {
+		return fmt.Errorf("error decoding database: %v", err)
+	}
+
+	// Guardar la base de datos recibida
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "./talentnest.db"
+	}
+
+	if err := os.WriteFile(dbPath, dbData, 0644); err != nil {
+		return fmt.Errorf("error writing database file: %v", err)
+	}
+
+	log.Printf("Successfully synced database from node (size: %d bytes)", len(dbData))
+
+	return nil
+}
+
 // ProvideSyncData proporciona la base de datos completa a un seguidor (solo líder)
 func (cs *ClusterState) ProvideSyncData() (SyncResponse, error) {
 	if !cs.IsLeader() {
