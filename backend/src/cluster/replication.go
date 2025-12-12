@@ -9,9 +9,18 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
+	"github.com/theleywin/Backend-Talent-Nest/src/lib"
 	"gorm.io/gorm"
+)
+
+var (
+	// Mutex global para proteger operaciones de sincronización
+	syncMutex sync.Mutex
+	// Flag para evitar sincronizaciones concurrentes
+	isSyncing bool
 )
 
 // ReplicateToFollowers envía un mensaje de replicación a todos los seguidores
@@ -159,12 +168,28 @@ func (cs *ClusterState) applyDelete(table string, recordID uint, db *gorm.DB) er
 
 // RequestFullSync solicita una sincronización completa de la base de datos al líder
 func (cs *ClusterState) RequestFullSync() error {
+	// Prevenir sincronizaciones concurrentes
+	syncMutex.Lock()
+	if isSyncing {
+		syncMutex.Unlock()
+		log.Println("⚠️  Sync already in progress, skipping...")
+		return nil
+	}
+	isSyncing = true
+	syncMutex.Unlock()
+
+	defer func() {
+		syncMutex.Lock()
+		isSyncing = false
+		syncMutex.Unlock()
+	}()
+
 	leaderAddress := cs.GetLeaderAddress()
 	if leaderAddress == "" {
 		return fmt.Errorf("no leader available for sync")
 	}
 
-	log.Printf("Requesting full sync from leader at %s", leaderAddress)
+	log.Printf("🔄 Requesting full sync from leader at %s", leaderAddress)
 
 	url := fmt.Sprintf("%s/cluster/sync", leaderAddress)
 
@@ -178,14 +203,20 @@ func (cs *ClusterState) RequestFullSync() error {
 		return fmt.Errorf("error marshaling sync request: %v", err)
 	}
 
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	// Timeout en la petición HTTP
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := client.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("error requesting sync: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("sync request failed with status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("sync request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var syncResponse SyncResponse
@@ -199,17 +230,14 @@ func (cs *ClusterState) RequestFullSync() error {
 		return fmt.Errorf("error decoding database: %v", err)
 	}
 
-	// Guardar la base de datos recibida
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "./talentnest.db"
+	log.Printf("📥 Received %d bytes from leader", len(dbData))
+
+	// Aplicar la base de datos con reconexión
+	if err := applySyncedDatabase(dbData); err != nil {
+		return fmt.Errorf("error applying synced database: %v", err)
 	}
 
-	if err := os.WriteFile(dbPath, dbData, 0644); err != nil {
-		return fmt.Errorf("error writing database file: %v", err)
-	}
-
-	log.Printf("Successfully synced database from leader (size: %d bytes)", len(dbData))
+	log.Printf("✅ Successfully synced and reconnected database")
 
 	// Marcar el nodo como listo
 	cs.mu.Lock()
@@ -222,7 +250,23 @@ func (cs *ClusterState) RequestFullSync() error {
 // syncFromNode sincroniza la base de datos desde un nodo específico (sin usar locks)
 // Esta función debe ser llamada sin tener el mutex bloqueado
 func (cs *ClusterState) syncFromNode(nodeAddress string) error {
-	log.Printf("Requesting sync from node at %s", nodeAddress)
+	// Prevenir sincronizaciones concurrentes
+	syncMutex.Lock()
+	if isSyncing {
+		syncMutex.Unlock()
+		log.Println("⚠️  Sync already in progress, skipping...")
+		return nil
+	}
+	isSyncing = true
+	syncMutex.Unlock()
+
+	defer func() {
+		syncMutex.Lock()
+		isSyncing = false
+		syncMutex.Unlock()
+	}()
+
+	log.Printf("🔄 Requesting sync from node at %s", nodeAddress)
 
 	url := fmt.Sprintf("%s/cluster/sync", nodeAddress)
 
@@ -236,14 +280,20 @@ func (cs *ClusterState) syncFromNode(nodeAddress string) error {
 		return fmt.Errorf("error marshaling sync request: %v", err)
 	}
 
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	// Timeout en la petición HTTP
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := client.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("error requesting sync: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("sync request failed with status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("sync request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var syncResponse SyncResponse
@@ -257,17 +307,69 @@ func (cs *ClusterState) syncFromNode(nodeAddress string) error {
 		return fmt.Errorf("error decoding database: %v", err)
 	}
 
-	// Guardar la base de datos recibida
+	log.Printf("📥 Received %d bytes from node", len(dbData))
+
+	// Aplicar la base de datos con reconexión
+	if err := applySyncedDatabase(dbData); err != nil {
+		return fmt.Errorf("error applying synced database: %v", err)
+	}
+
+	log.Printf("✅ Successfully synced and reconnected database")
+
+	return nil
+}
+
+// applySyncedDatabase cierra GORM, escribe el archivo y reconecta
+func applySyncedDatabase(dbData []byte) error {
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
 		dbPath = "./talentnest.db"
 	}
 
+	log.Println("🔒 Closing current database connection...")
+
+	// 1. Cerrar la conexión GORM actual
+	sqlDB, err := lib.DB.DB()
+	if err != nil {
+		log.Printf("⚠️  Warning: Could not get underlying DB: %v", err)
+	} else {
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("⚠️  Warning: Error closing database: %v", err)
+		} else {
+			log.Println("✅ Database connection closed")
+		}
+	}
+
+	// 2. Eliminar archivos WAL si existen (evitar inconsistencias)
+	walPath := dbPath + "-wal"
+	shmPath := dbPath + "-shm"
+	os.Remove(walPath)
+	os.Remove(shmPath)
+	log.Println("🗑️  Removed WAL files if they existed")
+
+	// 3. Esperar un momento para asegurar liberación de recursos
+	time.Sleep(200 * time.Millisecond)
+
+	// 4. Escribir el nuevo archivo de base de datos
+	log.Printf("💾 Writing new database file (%d bytes)...", len(dbData))
 	if err := os.WriteFile(dbPath, dbData, 0644); err != nil {
 		return fmt.Errorf("error writing database file: %v", err)
 	}
 
-	log.Printf("Successfully synced database from node (size: %d bytes)", len(dbData))
+	// 5. Esperar a que el SO sincronice el archivo
+	time.Sleep(200 * time.Millisecond)
+
+	// 6. Reconectar GORM
+	log.Println("🔄 Reconnecting to database...")
+	lib.ConnectDB()
+
+	// 7. Verificar que los datos están presentes
+	var userCount int64
+	if err := lib.DB.Table("users").Count(&userCount).Error; err != nil {
+		return fmt.Errorf("error verifying synced data: %v", err)
+	}
+
+	log.Printf("✅ Database reconnected successfully. Users count: %d", userCount)
 
 	return nil
 }
