@@ -9,9 +9,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // ReplicateToFollowers envía un mensaje de replicación a todos los seguidores
@@ -198,6 +201,13 @@ func (cs *ClusterState) RequestFullSync(leaderAddress string) error {
 		return fmt.Errorf("error decoding database: %v", err)
 	}
 
+	log.Printf("📥 Received database from leader (%d bytes)", len(dbData))
+
+	// 🔍 PREVIEW DE DATOS RECIBIDOS (antes de aplicar)
+	if err := previewSyncedDatabase(dbData); err != nil {
+		log.Printf("⚠️  Warning: Could not preview synced database: %v", err)
+	}
+
 	// Guardar la base de datos recibida
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
@@ -208,12 +218,83 @@ func (cs *ClusterState) RequestFullSync(leaderAddress string) error {
 		return fmt.Errorf("error writing database file: %v", err)
 	}
 
-	log.Printf("Successfully synced database from leader (size: %d bytes)", len(dbData))
+	log.Printf("✅ Successfully synced database from leader (size: %d bytes)", len(dbData))
 
 	// Marcar el nodo como listo
 	cs.mu.Lock()
 	cs.IsReady = true
 	cs.mu.Unlock()
+
+	return nil
+}
+
+// previewSyncedDatabase abre temporalmente la DB recibida y muestra su contenido
+func previewSyncedDatabase(dbData []byte) error {
+	// Crear archivo temporal
+	tempPath := "/tmp/preview_sync.db"
+	if err := os.WriteFile(tempPath, dbData, 0644); err != nil {
+		return fmt.Errorf("error writing temp db: %v", err)
+	}
+	defer os.Remove(tempPath)
+
+	// Abrir DB temporal con GORM
+	dsn := fmt.Sprintf("file:%s?mode=ro", tempPath) // modo read-only
+	tempDB, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return fmt.Errorf("error opening temp db: %v", err)
+	}
+
+	log.Println("\n========== PREVIEW: Database Received from Leader ==========")
+
+	tables := []string{"users", "posts", "connections", "notifications"}
+
+	for _, table := range tables {
+		var count int64
+		if err := tempDB.Table(table).Count(&count).Error; err != nil {
+			log.Printf("[%s] Error counting: %v", table, err)
+			continue
+		}
+
+		log.Printf("\n[Table: %s] Total records: %d", table, count)
+
+		if count == 0 {
+			log.Printf("  (empty)")
+			continue
+		}
+
+		// Obtener primeros 5 registros para preview
+		var records []map[string]interface{}
+		if err := tempDB.Table(table).Limit(5).Find(&records).Error; err != nil {
+			log.Printf("  Error fetching records: %v", err)
+			continue
+		}
+
+		log.Printf("  Sample records (first 5):")
+		for i, record := range records {
+			var fields []string
+			for key, value := range record {
+				var formattedValue string
+				switch v := value.(type) {
+				case string:
+					if len(v) > 50 {
+						formattedValue = v[:47] + "..."
+					} else {
+						formattedValue = v
+					}
+				case nil:
+					formattedValue = "<nil>"
+				default:
+					formattedValue = fmt.Sprintf("%v", v)
+				}
+				fields = append(fields, fmt.Sprintf("%s=%s", key, formattedValue))
+			}
+			log.Printf("    [%d] %s", i+1, strings.Join(fields, " | "))
+		}
+	}
+
+	log.Println("============================================================")
 
 	return nil
 }
