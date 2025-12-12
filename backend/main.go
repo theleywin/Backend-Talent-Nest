@@ -58,7 +58,7 @@ func main() {
 	// Si el nodo es seguidor, solicitar sincronización completa del líder
 	if !ClusterState.IsLeader() && ClusterState.GetLeaderAddress() != "" {
 		fmt.Println("This node is a follower, requesting full sync from leader...")
-		if err := ClusterState.RequestFullSync(); err != nil {
+		if err := ClusterState.RequestFullSync(ClusterState.GetLeaderAddress()); err != nil {
 			fmt.Printf("Warning: Failed to sync from leader: %v\n", err)
 			fmt.Println("Node will start with local database")
 		}

@@ -158,8 +158,7 @@ func (cs *ClusterState) applyDelete(table string, recordID uint, db *gorm.DB) er
 }
 
 // RequestFullSync solicita una sincronización completa de la base de datos al líder
-func (cs *ClusterState) RequestFullSync() error {
-	leaderAddress := cs.GetLeaderAddress()
+func (cs *ClusterState) RequestFullSync(leaderAddress string) error {
 	if leaderAddress == "" {
 		return fmt.Errorf("no leader available for sync")
 	}

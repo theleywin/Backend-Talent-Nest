@@ -47,7 +47,7 @@ func (cs *ClusterState) ElectLeader() {
 			log.Println("Former leader demoted to follower, will request sync")
 			go func() {
 				time.Sleep(5 * time.Second) // Esperar un poco para que el nuevo líder se estabilice
-				if err := cs.RequestFullSync(); err != nil {
+				if err := cs.RequestFullSync(newLeaderAddress); err != nil {
 					log.Printf("Error syncing after demotion: %v", err)
 				}
 			}()
@@ -88,7 +88,7 @@ func (cs *ClusterState) getAllNodesUnsafe() []*Node {
 
 // StartLeaderElection inicia el proceso de elección de líder cada 10 segundos
 func (cs *ClusterState) StartLeaderElection(db *gorm.DB) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 	go func() {
 		for range ticker.C {
 			log.Println("Starting leader election cycle...")
