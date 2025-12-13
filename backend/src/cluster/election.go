@@ -10,7 +10,7 @@ import (
 )
 
 // ElectLeader selecciona el líder basándose en el ID más bajo
-func (cs *ClusterState) ElectLeader() {
+func (cs *ClusterState) ElectLeader(db *gorm.DB) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
@@ -25,6 +25,52 @@ func (cs *ClusterState) ElectLeader() {
 	// El nodo con el ID más bajo es el líder
 	newLeaderID := nodes[0].ID
 	newLeaderAddress := nodes[0].Address
+
+	// CASO ESPECIAL: Si este nodo sería el nuevo líder, verificar si es nuevo (DB vacía)
+	if cs.CurrentNodeID == newLeaderID && len(nodes) > 1 {
+		// Verificar si la base de datos está vacía
+		var userCount int64
+		if db != nil {
+			db.Table("users").Count(&userCount)
+		}
+
+		// Si este nodo tiene DB vacía y hay otros nodos, necesita sincronizar primero
+		if userCount == 0 {
+			log.Println("⚠️  WARNING: This node would become leader but has empty database")
+			log.Printf("   Found %d other nodes in the network", len(nodes)-1)
+
+			// Identificar al segundo nodo (el que sería líder si este no existiera)
+			var previousLeaderNode *Node
+			if len(nodes) > 1 {
+				previousLeaderNode = nodes[1]
+			}
+
+			if previousLeaderNode != nil {
+				log.Printf("   Previous/Alternative leader: ID=%d, Address=%s", previousLeaderNode.ID, previousLeaderNode.Address)
+				log.Println("   🔄 Syncing with previous leader before taking leadership...")
+
+				// Liberar el lock temporalmente para hacer la sincronización
+				cs.mu.Unlock()
+
+				// Sincronizar con el nodo anterior
+				if err := cs.RequestFullSync(previousLeaderNode.Address); err != nil {
+					log.Printf("   ❌ Failed to sync from previous leader: %v", err)
+					log.Println("   Node will become leader with empty database (this may cause data loss!)")
+				} else {
+					log.Println("   ✅ Successfully synced database from previous leader")
+					// Verificar cuántos usuarios tenemos ahora
+					if db != nil {
+						db.Table("users").Count(&userCount)
+						log.Printf("   Database now has %d users", userCount)
+					}
+				}
+
+				// Re-adquirir el lock
+				cs.mu.Lock()
+			}
+		}
+	}
+
 
 	// Verificar si hay cambio de líder
 	if cs.LeaderID != newLeaderID {
@@ -100,7 +146,7 @@ func (cs *ClusterState) StartLeaderElection(db *gorm.DB) {
 			}
 
 			// Elegir líder
-			cs.ElectLeader()
+			cs.ElectLeader(db)
 
 			// Mostrar estado del cluster
 			cs.PrintClusterState()

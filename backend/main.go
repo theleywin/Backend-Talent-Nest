@@ -30,6 +30,10 @@ func main() {
 	}
 
 	ClusterState = cluster.NewClusterState(serviceName)
+	
+	// Connect to SQLite database
+	lib.ConnectDB()
+	lib.AutoMigrate()
 
 	// Descubrimiento inicial de nodos
 	if err := ClusterState.DiscoverNodes(); err != nil {
@@ -37,15 +41,10 @@ func main() {
 	}
 
 	// Elección inicial de líder
-	ClusterState.ElectLeader()
-
-	// Connect to SQLite database
-	lib.ConnectDB()
+	ClusterState.ElectLeader(lib.DB)
 
 	// Iniciar proceso de elección de líder cada 10 segundos (con acceso a la DB)
 	ClusterState.StartLeaderElection(lib.DB)
-
-	lib.AutoMigrate()
 
 	// Registrar el hook de replicación en GORM
 	replicationHook := &cluster.ReplicationHook{
