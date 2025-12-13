@@ -266,7 +266,7 @@ func previewSyncedDatabase(dbData []byte) error {
 
 		// Obtener primeros 5 registros para preview
 		var records []map[string]interface{}
-		if err := tempDB.Table(table).Limit(5).Find(&records).Error; err != nil {
+		if err := tempDB.Table(table).Limit(10).Find(&records).Error; err != nil {
 			log.Printf("  Error fetching records: %v", err)
 			continue
 		}
