@@ -9,9 +9,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // ReplicateToFollowers envía un mensaje de replicación a todos los seguidores
@@ -116,11 +119,14 @@ func (cs *ClusterState) ApplyReplication(message ReplicationMessage, db interfac
 func (cs *ClusterState) applyInsert(table string, data map[string]interface{}, db *gorm.DB) error {
 	log.Printf("[Replication] Inserting into %s: %v", table, data)
 
-	// Los datos ya vienen completos del hook de GORM con todos los campos correctos
-	// Solo necesitamos asegurarnos de que los timestamps estén en el formato correcto
+	// Convertir campos complejos (arrays, objects) a JSON para campos serializados
+	processedData := make(map[string]interface{})
+	for key, value := range data {
+		processedData[key] = serializeForDB(key, value)
+	}
 
 	// Ejecutar INSERT usando GORM
-	result := db.Table(table).Create(data)
+	result := db.Table(table).Create(processedData)
 	if result.Error != nil {
 		log.Printf("[Replication] ❌ Error inserting into %s: %v", table, result.Error)
 		return fmt.Errorf("error inserting into %s: %v", table, result.Error)
@@ -133,8 +139,14 @@ func (cs *ClusterState) applyInsert(table string, data map[string]interface{}, d
 func (cs *ClusterState) applyUpdate(table string, recordID uint, data map[string]interface{}, db *gorm.DB) error {
 	log.Printf("Updating %s record %d: %v", table, recordID, data)
 
+	// Convertir campos complejos (arrays, objects) a JSON para campos serializados
+	processedData := make(map[string]interface{})
+	for key, value := range data {
+		processedData[key] = serializeForDB(key, value)
+	}
+
 	// Ejecutar UPDATE en la tabla correspondiente
-	result := db.Table(table).Where("id = ?", recordID).Updates(data)
+	result := db.Table(table).Where("id = ?", recordID).Updates(processedData)
 	if result.Error != nil {
 		return fmt.Errorf("error updating record: %v", result.Error)
 	}
@@ -158,8 +170,7 @@ func (cs *ClusterState) applyDelete(table string, recordID uint, db *gorm.DB) er
 }
 
 // RequestFullSync solicita una sincronización completa de la base de datos al líder
-func (cs *ClusterState) RequestFullSync() error {
-	leaderAddress := cs.GetLeaderAddress()
+func (cs *ClusterState) RequestFullSync(leaderAddress string) error {
 	if leaderAddress == "" {
 		return fmt.Errorf("no leader available for sync")
 	}
@@ -199,6 +210,13 @@ func (cs *ClusterState) RequestFullSync() error {
 		return fmt.Errorf("error decoding database: %v", err)
 	}
 
+	log.Printf("📥 Received database from leader (%d bytes)", len(dbData))
+
+	// 🔍 PREVIEW DE DATOS RECIBIDOS (antes de aplicar)
+	if err := previewSyncedDatabase(dbData); err != nil {
+		log.Printf("⚠️  Warning: Could not preview synced database: %v", err)
+	}
+
 	// Guardar la base de datos recibida
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
@@ -209,12 +227,83 @@ func (cs *ClusterState) RequestFullSync() error {
 		return fmt.Errorf("error writing database file: %v", err)
 	}
 
-	log.Printf("Successfully synced database from leader (size: %d bytes)", len(dbData))
+	log.Printf("✅ Successfully synced database from leader (size: %d bytes)", len(dbData))
 
 	// Marcar el nodo como listo
 	cs.mu.Lock()
 	cs.IsReady = true
 	cs.mu.Unlock()
+
+	return nil
+}
+
+// previewSyncedDatabase abre temporalmente la DB recibida y muestra su contenido
+func previewSyncedDatabase(dbData []byte) error {
+	// Crear archivo temporal
+	tempPath := "/tmp/preview_sync.db"
+	if err := os.WriteFile(tempPath, dbData, 0644); err != nil {
+		return fmt.Errorf("error writing temp db: %v", err)
+	}
+	defer os.Remove(tempPath)
+
+	// Abrir DB temporal con GORM
+	dsn := fmt.Sprintf("file:%s?mode=ro", tempPath) // modo read-only
+	tempDB, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return fmt.Errorf("error opening temp db: %v", err)
+	}
+
+	log.Println("\n========== PREVIEW: Database Received from Leader ==========")
+
+	tables := []string{"users", "posts", "connections", "notifications"}
+
+	for _, table := range tables {
+		var count int64
+		if err := tempDB.Table(table).Count(&count).Error; err != nil {
+			log.Printf("[%s] Error counting: %v", table, err)
+			continue
+		}
+
+		log.Printf("\n[Table: %s] Total records: %d", table, count)
+
+		if count == 0 {
+			log.Printf("  (empty)")
+			continue
+		}
+
+		// Obtener primeros 5 registros para preview
+		var records []map[string]interface{}
+		if err := tempDB.Table(table).Limit(10).Find(&records).Error; err != nil {
+			log.Printf("  Error fetching records: %v", err)
+			continue
+		}
+
+		log.Printf("  Sample records (first 5):")
+		for i, record := range records {
+			var fields []string
+			for key, value := range record {
+				var formattedValue string
+				switch v := value.(type) {
+				case string:
+					if len(v) > 50 {
+						formattedValue = v[:47] + "..."
+					} else {
+						formattedValue = v
+					}
+				case nil:
+					formattedValue = "<nil>"
+				default:
+					formattedValue = fmt.Sprintf("%v", v)
+				}
+				fields = append(fields, fmt.Sprintf("%s=%s", key, formattedValue))
+			}
+			log.Printf("    [%d] %s", i+1, strings.Join(fields, " | "))
+		}
+	}
+
+	log.Println("============================================================")
 
 	return nil
 }
@@ -291,4 +380,47 @@ func (cs *ClusterState) SetReady(ready bool) {
 	defer cs.mu.Unlock()
 	cs.IsReady = ready
 	log.Printf("Node ready status set to: %v", ready)
+}
+
+// serializeForDB convierte valores complejos a formato JSON para campos serializados
+func serializeForDB(fieldName string, value interface{}) interface{} {
+	if value == nil {
+		return nil
+	}
+
+	// Lista de campos que usan serializer:json en la tabla users
+	jsonFields := map[string]bool{
+		"skills":     true,
+		"experience": true,
+		"education":  true,
+	}
+
+	// Si es un campo serializado y es un tipo complejo, convertir a JSON
+	if jsonFields[fieldName] {
+		switch v := value.(type) {
+		case []interface{}, []map[string]interface{}, map[string]interface{}:
+			// Serializar a JSON bytes
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				log.Printf("[serializeForDB] Error serializing %s: %v", fieldName, err)
+				return nil
+			}
+			log.Printf("[serializeForDB] ✓ Serialized %s to JSON (%d bytes)", fieldName, len(jsonBytes))
+			return jsonBytes
+		case string:
+			// Ya es string, puede ser JSON serializado
+			return v
+		default:
+			// Intentar serializar cualquier otro tipo
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				log.Printf("[serializeForDB] Error serializing %s (type %T): %v", fieldName, v, err)
+				return value
+			}
+			return jsonBytes
+		}
+	}
+
+	// Para campos no serializados, devolver el valor tal cual
+	return value
 }

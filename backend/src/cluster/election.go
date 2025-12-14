@@ -10,7 +10,7 @@ import (
 )
 
 // ElectLeader selecciona el líder basándose en el ID más bajo
-func (cs *ClusterState) ElectLeader() {
+func (cs *ClusterState) ElectLeader(db *gorm.DB) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
@@ -26,6 +26,52 @@ func (cs *ClusterState) ElectLeader() {
 	newLeaderID := nodes[0].ID
 	newLeaderAddress := nodes[0].Address
 
+	// CASO ESPECIAL: Si este nodo sería el nuevo líder, verificar si es nuevo (DB vacía)
+	if cs.CurrentNodeID == newLeaderID && len(nodes) > 1 {
+		// Verificar si la base de datos está vacía
+		var userCount int64
+		if db != nil {
+			db.Table("users").Count(&userCount)
+		}
+
+		// Si este nodo tiene DB vacía y hay otros nodos, necesita sincronizar primero
+		if userCount == 0 {
+			log.Println("⚠️  WARNING: This node would become leader but has empty database")
+			log.Printf("   Found %d other nodes in the network", len(nodes)-1)
+
+			// Identificar al segundo nodo (el que sería líder si este no existiera)
+			var previousLeaderNode *Node
+			if len(nodes) > 1 {
+				previousLeaderNode = nodes[1]
+			}
+
+			if previousLeaderNode != nil {
+				log.Printf("   Previous/Alternative leader: ID=%d, Address=%s", previousLeaderNode.ID, previousLeaderNode.Address)
+				log.Println("   🔄 Syncing with previous leader before taking leadership...")
+
+				// Liberar el lock temporalmente para hacer la sincronización
+				cs.mu.Unlock()
+
+				// Sincronizar con el nodo anterior
+				if err := cs.RequestFullSync(previousLeaderNode.Address); err != nil {
+					log.Printf("   ❌ Failed to sync from previous leader: %v", err)
+					log.Println("   Node will become leader with empty database (this may cause data loss!)")
+				} else {
+					log.Println("   ✅ Successfully synced database from previous leader")
+					// Verificar cuántos usuarios tenemos ahora
+					if db != nil {
+						db.Table("users").Count(&userCount)
+						log.Printf("   Database now has %d users", userCount)
+					}
+				}
+
+				// Re-adquirir el lock
+				cs.mu.Lock()
+			}
+		}
+	}
+
+
 	// Verificar si hay cambio de líder
 	if cs.LeaderID != newLeaderID {
 		oldLeaderID := cs.LeaderID
@@ -40,21 +86,18 @@ func (cs *ClusterState) ElectLeader() {
 			cs.IsReady = true // El líder siempre está listo
 			log.Printf("This node (ID=%d) is now the LEADER", cs.CurrentNodeID)
 		} else {
-			oldRole := cs.CurrentRole
 			cs.CurrentRole = Follower
 			log.Printf("This node (ID=%d) is now a FOLLOWER. Leader is ID=%d", cs.CurrentNodeID, newLeaderID)
+			// necesita resincronizarse
+			cs.IsReady = false
+			log.Println("Former leader demoted to follower, will request sync")
+			go func() {
+				time.Sleep(5 * time.Second) // Esperar un poco para que el nuevo líder se estabilice
+				if err := cs.RequestFullSync(newLeaderAddress); err != nil {
+					log.Printf("Error syncing after demotion: %v", err)
+				}
+			}()
 
-			// Si este nodo era líder y ahora es seguidor, necesita resincronizarse
-			if oldRole == Leader {
-				cs.IsReady = false
-				log.Println("Former leader demoted to follower, will request sync")
-				go func() {
-					time.Sleep(2 * time.Second) // Esperar un poco para que el nuevo líder se estabilice
-					if err := cs.RequestFullSync(); err != nil {
-						log.Printf("Error syncing after demotion: %v", err)
-					}
-				}()
-			}
 		}
 
 		// Actualizar roles en el mapa de nodos
@@ -91,7 +134,7 @@ func (cs *ClusterState) getAllNodesUnsafe() []*Node {
 
 // StartLeaderElection inicia el proceso de elección de líder cada 10 segundos
 func (cs *ClusterState) StartLeaderElection(db *gorm.DB) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 	go func() {
 		for range ticker.C {
 			log.Println("Starting leader election cycle...")
@@ -103,7 +146,7 @@ func (cs *ClusterState) StartLeaderElection(db *gorm.DB) {
 			}
 
 			// Elegir líder
-			cs.ElectLeader()
+			cs.ElectLeader(db)
 
 			// Mostrar estado del cluster
 			cs.PrintClusterState()
@@ -139,32 +182,32 @@ func (cs *ClusterState) PrintClusterState() {
 func (cs *ClusterState) PrintDatabaseState(db *gorm.DB) {
 	log.Println("\n========== Database State ==========")
 	log.Printf("Node ID: %d | Role: %s", cs.CurrentNodeID, cs.CurrentRole)
-	
+
 	tables := []string{"users", "posts", "connections", "notifications"}
-	
+
 	for _, table := range tables {
 		var count int64
-		
+
 		// Contar registros
 		if err := db.Table(table).Count(&count).Error; err != nil {
 			log.Printf("[%s] Error counting: %v", table, err)
 			continue
 		}
-		
+
 		log.Printf("\n[Table: %s] Total records: %d", table, count)
-		
+
 		if count == 0 {
 			log.Printf("  (empty)")
 			continue
 		}
-		
+
 		// Obtener todos los registros como mapas
 		var records []map[string]interface{}
 		if err := db.Table(table).Find(&records).Error; err != nil {
 			log.Printf("  Error fetching records: %v", err)
 			continue
 		}
-		
+
 		// Imprimir cada registro
 		log.Printf("  Records:")
 		for i, record := range records {
@@ -191,6 +234,6 @@ func (cs *ClusterState) PrintDatabaseState(db *gorm.DB) {
 			log.Printf("    [%d] %s", i+1, strings.Join(fields, " | "))
 		}
 	}
-	
+
 	log.Println("\n=====================================")
 }

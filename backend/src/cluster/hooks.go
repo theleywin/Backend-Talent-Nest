@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"encoding/json"
 	"log"
 	"time"
 
@@ -57,7 +58,22 @@ func (h *ReplicationHook) afterCreate(db *gorm.DB) {
 
 	for _, field := range statement.Schema.Fields {
 		if field.Readable && field.DBName != "" {
-			value, isZero := field.ValueOf(db.Statement.Context, statement.ReflectValue)
+			var value interface{}
+			var isZero bool
+
+			// Para campos con serializador JSON, obtener el valor real del struct
+			if field.Serializer != nil {
+				fieldValue := statement.ReflectValue.FieldByName(field.Name)
+				if fieldValue.IsValid() && fieldValue.CanInterface() {
+					value = fieldValue.Interface()
+					isZero = fieldValue.IsZero()
+				} else {
+					continue
+				}
+			} else {
+				value, isZero = field.ValueOf(db.Statement.Context, statement.ReflectValue)
+			}
+
 			if !isZero {
 				// Solo agregar valores primitivos o serializables
 				cleanValue := sanitizeValue(value)
@@ -122,11 +138,31 @@ func (h *ReplicationHook) afterUpdate(db *gorm.DB) {
 		// Si se usó Save() o Updates() con struct, extraer TODOS los campos
 		for _, field := range statement.Schema.Fields {
 			if field.Readable && field.DBName != "" && field.DBName != "id" {
-				value, _ := field.ValueOf(db.Statement.Context, statement.ReflectValue)
+				// Para campos con serializador JSON, obtener el valor real del struct
+				var value interface{}
+				if field.Serializer != nil {
+					// Campo serializado: obtener el valor directamente del struct
+					fieldValue := statement.ReflectValue.FieldByName(field.Name)
+					if fieldValue.IsValid() && fieldValue.CanInterface() {
+						value = fieldValue.Interface()
+						log.Printf("[ReplicationHook] Field %s (serialized, type: %T)", field.DBName, value)
+					} else {
+						log.Printf("[ReplicationHook] ⚠️ Cannot access serialized field %s", field.DBName)
+						continue
+					}
+				} else {
+					// Campo normal: usar ValueOf
+					value, _ = field.ValueOf(db.Statement.Context, statement.ReflectValue)
+					log.Printf("[ReplicationHook] Field %s (type: %T)", field.DBName, value)
+				}
+
 				// No filtrar por isZero porque Save() guarda todo
 				cleanValue := sanitizeValue(value)
 				if cleanValue != nil {
 					data[field.DBName] = cleanValue
+					log.Printf("[ReplicationHook] ✓ Added field %s to replication data", field.DBName)
+				} else {
+					log.Printf("[ReplicationHook] ⚠️ Field %s returned nil after sanitization (type: %T)", field.DBName, value)
 				}
 			}
 		}
@@ -210,13 +246,54 @@ func sanitizeValue(value interface{}) interface{} {
 		// Convertir time.Time a string ISO
 		return v.Format(time.RFC3339)
 	case []byte:
-		// Convertir bytes a string
+		// Bytes pueden ser JSON serializado por GORM, intentar deserializar
+		if len(v) == 0 {
+			return nil
+		}
+		var jsonData interface{}
+		if err := json.Unmarshal(v, &jsonData); err == nil {
+			log.Printf("[sanitizeValue] ✓ Deserialized []byte to JSON: %v", jsonData)
+			return jsonData
+		}
+		// Si no es JSON válido, devolver como string
 		return string(v)
-	case []string, []int, []uint, []float64:
-		// Slices de tipos primitivos son seguros
+	case []string:
+		return v
+	case []int:
+		return v
+	case []uint:
+		return v
+	case []float64:
+		return v
+	case []interface{}:
+		// Slice de interfaces (pueden ser arrays JSON)
+		log.Printf("[sanitizeValue] ✓ Found []interface{} with %d elements", len(v))
+		return v
+	case []map[string]interface{}:
+		// Slice de mapas (experience, education, etc.)
+		log.Printf("[sanitizeValue] ✓ Found []map[string]interface{} with %d elements", len(v))
+		return v
+	case map[string]interface{}:
+		// Map genérico
 		return v
 	default:
-		// Ignorar tipos complejos que no se pueden serializar
-		return nil
+		// Para otros tipos complejos, intentar serializar como JSON
+		// Esto captura structs, slices de structs, etc.
+		log.Printf("[sanitizeValue] Attempting to serialize type %T", v)
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			log.Printf("[sanitizeValue] ❌ Cannot serialize value of type %T: %v", v, err)
+			return nil
+		}
+
+		// Deserializar de nuevo para obtener un tipo nativo de Go
+		var jsonData interface{}
+		if err := json.Unmarshal(jsonBytes, &jsonData); err != nil {
+			log.Printf("[sanitizeValue] ❌ Cannot deserialize JSON: %v", err)
+			return nil
+		}
+
+		log.Printf("[sanitizeValue] ✓ Serialized type %T to: %v", v, jsonData)
+		return jsonData
 	}
 }

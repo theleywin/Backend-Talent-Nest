@@ -2,7 +2,6 @@ import { School, X } from "lucide-react";
 import { useState } from "react";
 
 interface Education {
-    _id: string;
     school: string;
     fieldOfStudy: string;
     startYear: string;
@@ -18,7 +17,7 @@ interface EducationSectionProps {
 const EducationSection = ({ userData, isOwnProfile, onSave }: EducationSectionProps) => {
     const [isEditing, setIsEditing] = useState(false);
     const [educations, setEducations] = useState<Education[]>(userData.education || []);
-    const [newEducation, setNewEducation] = useState<Omit<Education, "_id">>({
+    const [newEducation, setNewEducation] = useState<Education>({
         school: "",
         fieldOfStudy: "",
         startYear: "",
@@ -29,7 +28,7 @@ const EducationSection = ({ userData, isOwnProfile, onSave }: EducationSectionPr
         if (newEducation.school && newEducation.fieldOfStudy && newEducation.startYear) {
             setEducations([
                 ...educations,
-                { ...newEducation, _id: crypto.randomUUID() }
+                newEducation
             ]);
             setNewEducation({
                 school: "",
@@ -40,8 +39,8 @@ const EducationSection = ({ userData, isOwnProfile, onSave }: EducationSectionPr
         }
     };
 
-    const handleDeleteEducation = (id: string) => {
-        setEducations(educations.filter((edu: Education) => edu._id !== id));
+    const handleDeleteEducation = (index: number) => {
+        setEducations(educations.filter((_, i) => i !== index));
     };
 
     const handleSave = () => {
@@ -52,8 +51,8 @@ const EducationSection = ({ userData, isOwnProfile, onSave }: EducationSectionPr
     return (
         <div className='bg-white shadow rounded-lg p-6 mb-6'>
             <h2 className='text-xl font-semibold mb-4'>Education</h2>
-            {educations.map((edu: Education) => (
-                <div key={edu._id} className='mb-4 flex justify-between items-start'>
+            {educations.map((edu: Education, index: number) => (
+                <div key={index} className='mb-4 flex justify-between items-start'>
                     <div className='flex items-start'>
                         <School size={20} className='mr-2 mt-1' />
                         <div>
@@ -65,7 +64,7 @@ const EducationSection = ({ userData, isOwnProfile, onSave }: EducationSectionPr
                         </div>
                     </div>
                     {isEditing && (
-                        <button onClick={() => handleDeleteEducation(edu._id)} className='text-red-500'>
+                        <button onClick={() => handleDeleteEducation(index)} className='text-red-500'>
                             <X size={20} />
                         </button>
                     )}

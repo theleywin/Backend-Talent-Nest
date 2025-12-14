@@ -31,21 +31,20 @@ func main() {
 
 	ClusterState = cluster.NewClusterState(serviceName)
 
+	// Connect to SQLite database
+	lib.ConnectDB()
+	lib.AutoMigrate()
+
 	// Descubrimiento inicial de nodos
 	if err := ClusterState.DiscoverNodes(); err != nil {
 		fmt.Printf("Warning: Initial node discovery failed: %v\n", err)
 	}
 
 	// Elección inicial de líder
-	ClusterState.ElectLeader()
-
-	// Connect to SQLite database
-	lib.ConnectDB()
+	ClusterState.ElectLeader(lib.DB)
 
 	// Iniciar proceso de elección de líder cada 10 segundos (con acceso a la DB)
 	ClusterState.StartLeaderElection(lib.DB)
-
-	lib.AutoMigrate()
 
 	// Registrar el hook de replicación en GORM
 	replicationHook := &cluster.ReplicationHook{
@@ -58,7 +57,7 @@ func main() {
 	// Si el nodo es seguidor, solicitar sincronización completa del líder
 	if !ClusterState.IsLeader() && ClusterState.GetLeaderAddress() != "" {
 		fmt.Println("This node is a follower, requesting full sync from leader...")
-		if err := ClusterState.RequestFullSync(); err != nil {
+		if err := ClusterState.RequestFullSync(ClusterState.GetLeaderAddress()); err != nil {
 			fmt.Printf("Warning: Failed to sync from leader: %v\n", err)
 			fmt.Println("Node will start with local database")
 		}
