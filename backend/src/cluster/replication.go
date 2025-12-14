@@ -119,11 +119,14 @@ func (cs *ClusterState) ApplyReplication(message ReplicationMessage, db interfac
 func (cs *ClusterState) applyInsert(table string, data map[string]interface{}, db *gorm.DB) error {
 	log.Printf("[Replication] Inserting into %s: %v", table, data)
 
-	// Los datos ya vienen completos del hook de GORM con todos los campos correctos
-	// Solo necesitamos asegurarnos de que los timestamps estén en el formato correcto
+	// Convertir campos complejos (arrays, objects) a JSON para campos serializados
+	processedData := make(map[string]interface{})
+	for key, value := range data {
+		processedData[key] = serializeForDB(key, value)
+	}
 
 	// Ejecutar INSERT usando GORM
-	result := db.Table(table).Create(data)
+	result := db.Table(table).Create(processedData)
 	if result.Error != nil {
 		log.Printf("[Replication] ❌ Error inserting into %s: %v", table, result.Error)
 		return fmt.Errorf("error inserting into %s: %v", table, result.Error)
@@ -136,8 +139,14 @@ func (cs *ClusterState) applyInsert(table string, data map[string]interface{}, d
 func (cs *ClusterState) applyUpdate(table string, recordID uint, data map[string]interface{}, db *gorm.DB) error {
 	log.Printf("Updating %s record %d: %v", table, recordID, data)
 
+	// Convertir campos complejos (arrays, objects) a JSON para campos serializados
+	processedData := make(map[string]interface{})
+	for key, value := range data {
+		processedData[key] = serializeForDB(key, value)
+	}
+
 	// Ejecutar UPDATE en la tabla correspondiente
-	result := db.Table(table).Where("id = ?", recordID).Updates(data)
+	result := db.Table(table).Where("id = ?", recordID).Updates(processedData)
 	if result.Error != nil {
 		return fmt.Errorf("error updating record: %v", result.Error)
 	}
@@ -371,4 +380,47 @@ func (cs *ClusterState) SetReady(ready bool) {
 	defer cs.mu.Unlock()
 	cs.IsReady = ready
 	log.Printf("Node ready status set to: %v", ready)
+}
+
+// serializeForDB convierte valores complejos a formato JSON para campos serializados
+func serializeForDB(fieldName string, value interface{}) interface{} {
+	if value == nil {
+		return nil
+	}
+
+	// Lista de campos que usan serializer:json en la tabla users
+	jsonFields := map[string]bool{
+		"skills":     true,
+		"experience": true,
+		"education":  true,
+	}
+
+	// Si es un campo serializado y es un tipo complejo, convertir a JSON
+	if jsonFields[fieldName] {
+		switch v := value.(type) {
+		case []interface{}, []map[string]interface{}, map[string]interface{}:
+			// Serializar a JSON bytes
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				log.Printf("[serializeForDB] Error serializing %s: %v", fieldName, err)
+				return nil
+			}
+			log.Printf("[serializeForDB] ✓ Serialized %s to JSON (%d bytes)", fieldName, len(jsonBytes))
+			return jsonBytes
+		case string:
+			// Ya es string, puede ser JSON serializado
+			return v
+		default:
+			// Intentar serializar cualquier otro tipo
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				log.Printf("[serializeForDB] Error serializing %s (type %T): %v", fieldName, v, err)
+				return value
+			}
+			return jsonBytes
+		}
+	}
+
+	// Para campos no serializados, devolver el valor tal cual
+	return value
 }
