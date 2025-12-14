@@ -3,7 +3,6 @@ import { useState } from "react";
 import { formatDate } from "../utils/dateUtils.ts";
 
 interface Experience {
-    _id: string;
     title: string;
     company: string;
     startDate: string;
@@ -21,7 +20,7 @@ interface ExperienceSectionProps {
 const ExperienceSection = ({ userData, isOwnProfile, onSave }: ExperienceSectionProps) => {
     const [isEditing, setIsEditing] = useState(false);
     const [experiences, setExperiences] = useState<Experience[]>(userData.experience || []);
-    const [newExperience, setNewExperience] = useState<Omit<Experience, "_id">>({
+    const [newExperience, setNewExperience] = useState<Experience>({
         title: "",
         company: "",
         startDate: "",
@@ -34,7 +33,7 @@ const ExperienceSection = ({ userData, isOwnProfile, onSave }: ExperienceSection
         if (newExperience.title && newExperience.company && newExperience.startDate) {
             setExperiences([
                 ...experiences,
-                { ...newExperience, _id: crypto.randomUUID() }
+                newExperience
             ]);
             setNewExperience({
                 title: "",
@@ -47,8 +46,8 @@ const ExperienceSection = ({ userData, isOwnProfile, onSave }: ExperienceSection
         }
     };
 
-    const handleDeleteExperience = (id: string) => {
-        setExperiences(experiences.filter((exp: Experience) => exp._id !== id));
+    const handleDeleteExperience = (index: number) => {
+        setExperiences(experiences.filter((_, i) => i !== index));
     };
 
     const handleSave = () => {
@@ -67,8 +66,8 @@ const ExperienceSection = ({ userData, isOwnProfile, onSave }: ExperienceSection
     return (
         <div className='bg-white shadow rounded-lg p-6 mb-6'>
             <h2 className='text-xl font-semibold mb-4'>Experience</h2>
-            {experiences.map((exp: Experience) => (
-                <div key={exp._id} className='mb-4 flex justify-between items-start'>
+            {experiences.map((exp: Experience, index: number) => (
+                <div key={index} className='mb-4 flex justify-between items-start'>
                     <div className='flex items-start'>
                         <Briefcase size={20} className='mr-2 mt-1' />
                         <div>
@@ -81,7 +80,7 @@ const ExperienceSection = ({ userData, isOwnProfile, onSave }: ExperienceSection
                         </div>
                     </div>
                     {isEditing && (
-                        <button onClick={() => handleDeleteExperience(exp._id)} className='text-red-500'>
+                        <button onClick={() => handleDeleteExperience(index)} className='text-red-500'>
                             <X size={20} />
                         </button>
                     )}
