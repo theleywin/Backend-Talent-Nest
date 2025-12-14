@@ -30,7 +30,7 @@ func main() {
 	}
 
 	ClusterState = cluster.NewClusterState(serviceName)
-	
+
 	// Connect to SQLite database
 	lib.ConnectDB()
 	lib.AutoMigrate()

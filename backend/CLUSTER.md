@@ -4,7 +4,7 @@
 
 Este sistema implementa un cluster distribuido de nodos backend con:
 
-- **Descubrimiento de nodos**: Usando DNS de Docker
+- **Descubrimiento de nodos**: Usando DNS de Docker con fallback a escaneo de IPs
 - **Elección de líder**: Basada en ID más alto
 - **Reelección automática**: Cada 10 segundos
 - **Tolerancia a fallos**: Detección de nodos caídos
@@ -14,10 +14,37 @@ Este sistema implementa un cluster distribuido de nodos backend con:
 ```
 src/cluster/
 ├── types.go       # Definiciones de tipos y estructuras
-├── discovery.go   # Descubrimiento de nodos via DNS
+├── discovery.go   # Descubrimiento de nodos via DNS y escaneo de red
 ├── election.go    # Algoritmo de elección de líder
 └── api.go         # API para consultar estado del cluster
 ```
+
+## Descubrimiento de Nodos
+
+El sistema implementa un mecanismo de descubrimiento robusto con dos estrategias:
+
+### 1. DNS Lookup (Método Principal)
+
+Por defecto, el sistema usa el DNS de Docker Swarm para descubrir nodos:
+- Consulta el alias de red `backend-service`
+- Docker Swarm retorna las IPs de todos los contenedores en el servicio
+- Es el método más eficiente y rápido
+
+### 2. Escaneo de Red (Fallback)
+
+Si el DNS falla, el sistema automáticamente:
+1. Obtiene el rango de IPs del Swarm network desde `SWARM_NETWORK_SUBNET`
+2. Si no está definida, infiere el subnet desde la IP actual (red /24)
+3. Escanea todas las IPs en el rango buscando nodos healthy
+4. Verifica cada nodo intentando conectarse a `/cluster/status`
+5. Solo incluye nodos que respondan correctamente
+
+**Características del escaneo:**
+- Escaneo paralelo con límite de 20 goroutines concurrentes
+- Timeout de 2 segundos por IP
+- Timeout total de 5 segundos para todo el escaneo
+- Verifica que la respuesta sea un nodo válido del cluster
+- Evita IPs de red y broadcast
 
 ## Comandos Docker
 
@@ -45,6 +72,7 @@ docker run -d \
   --env SERVICE_NAME=backend-service \
   --env JWT_SECRET=secret_key \
   --env PORT=3000 \
+  --env SWARM_NETWORK_SUBNET=172.18.0.0/24 \
   backend-tn:latest
 ```
 
@@ -58,6 +86,7 @@ docker run -d \
   --env SERVICE_NAME=backend-service \
   --env JWT_SECRET=secret_key \
   --env PORT=3000 \
+  --env SWARM_NETWORK_SUBNET=172.18.0.0/24 \
   backend-tn:latest
 ```
 
@@ -71,8 +100,18 @@ docker run -d \
   --env SERVICE_NAME=backend-service \
   --env JWT_SECRET=secret_key \
   --env PORT=3000 \
+  --env SWARM_NETWORK_SUBNET=172.18.0.0/24 \
   backend-tn:latest
 ```
+
+### Variables de Entorno
+
+- `SERVICE_NAME`: Nombre del alias de red del servicio (para DNS lookup)
+- `JWT_SECRET`: Secreto para firmar tokens JWT
+- `PORT`: Puerto interno del contenedor (3000 por defecto)
+- `SWARM_NETWORK_SUBNET`: Rango CIDR de la red del Swarm (ej: `172.18.0.0/24`)
+  - Opcional: Si no se especifica, se infiere automáticamente desde la IP del nodo
+  - Usado como fallback cuando el DNS no funciona
 
 ### 4. Consultar estado del cluster
 
